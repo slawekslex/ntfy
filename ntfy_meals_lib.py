@@ -17,6 +17,15 @@ import requests
 ORION_BASE = "https://orion-api.ntfy.pl/api/v2.0"
 MEAL_ORDER = ["BREAKFAST", "SECOND-BREAKFAST", "LUNCH", "TEA", "DINNER"]
 CACHE_FILE = ".ntfy_cookie_cache.json"
+DELIVERY_EXPANSIONS = (
+    "address_id,delivery_items,delivery_items.simple_products,"
+    "delivery_items.diet_variant_meals,"
+    "delivery_items.diet_variant_meals.diet_variant_meal_types,"
+    "delivery_items.alternative_meals,"
+    "delivery_items.simple_products.product_labels,"
+    "delivery_items.simple_products.product_badges,"
+    "delivery_items.simple_products.badges"
+)
 
 
 @dataclass
@@ -682,10 +691,21 @@ def apply_optimal_plan_via_api(
     return {"failures": failures, "page_nutrition": {}}
 
 
-def build_rows_by_meal(delivery_payload: dict) -> tuple[int, Dict[str, List[dict]]]:
+def build_rows_by_meal(
+    delivery_payload: dict,
+    *,
+    requested_date: Optional[str] = None,
+    requested_diet_name: Optional[str] = None,
+) -> tuple[int, Dict[str, List[dict]]]:
     results = delivery_payload.get("results", [])
     if not results:
-        raise ValueError("No deliveries found for the requested date/diet.")
+        detail_parts = []
+        if requested_date:
+            detail_parts.append(f"date={requested_date}")
+        if requested_diet_name:
+            detail_parts.append(f"diet={requested_diet_name}")
+        detail_text = f" ({', '.join(detail_parts)})" if detail_parts else ""
+        raise ValueError(f"No deliveries found for the requested date/diet{detail_text}.")
 
     includes = delivery_payload.get("includes", {})
     delivery_id = results[0]["id"]
@@ -807,19 +827,15 @@ def fetch_delivery_context(
             "delivery_diet_id": str(delivery_diet_id),
             "status__in": "TO-BE-REALIZED,REALIZED",
             "aggregate_by__in": "nutritional_data:date",
-            "expansions__in": (
-                "address_id,delivery_items,delivery_items.simple_products,"
-                "delivery_items.diet_variant_meals,"
-                "delivery_items.diet_variant_meals.diet_variant_meal_types,"
-                "delivery_items.alternative_meals,"
-                "delivery_items.simple_products.product_labels,"
-                "delivery_items.simple_products.product_badges,"
-                "delivery_items.simple_products.badges"
-            ),
+            "expansions__in": DELIVERY_EXPANSIONS,
         },
     )
 
-    delivery_id, rows_by_meal = build_rows_by_meal(deliveries)
+    delivery_id, rows_by_meal = build_rows_by_meal(
+        deliveries,
+        requested_date=date,
+        requested_diet_name=diet_name,
+    )
     return {
         "client": client,
         "cookies": client.cookies,

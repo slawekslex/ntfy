@@ -127,6 +127,12 @@
       font-size: 0.9rem;
     }
 
+    .top-links {
+      display: flex;
+      gap: 10px;
+      align-items: center;
+    }
+
     .target-controls {
       display: flex;
       flex-wrap: wrap;
@@ -354,6 +360,9 @@
       <div class="hero-card sticky-main-bar" id="heroCard">
           <div class="toolbar">
             <div class="toolbar-right">
+              <div class="top-links">
+                <a class="jump-button" href="/?start={{ current_date }}">Overview</a>
+              </div>
               <span class="toolbar-label">{{ diet_name }}</span>
               <div class="date-form">
                 <div class="date-nav">
@@ -373,6 +382,7 @@
                 </div>
                 <button class="jump-button" id="goDateButton" type="button">Go</button>
               </div>
+              <button class="small-button" type="button" id="editButton">Edit</button>
               <button class="small-button" type="button" id="saveButton">Save</button>
               <button class="small-button" type="button" id="clearSelectionsButton">Unselect all</button>
               <span class="save-status" id="saveStatus"></span>
@@ -408,6 +418,7 @@
     const goDateButton = document.getElementById("goDateButton");
     const proteinTargetInput = document.getElementById("proteinTargetInput");
     const fiberTargetInput = document.getElementById("fiberTargetInput");
+    const editButton = document.getElementById("editButton");
     const saveButton = document.getElementById("saveButton");
     const clearSelectionsButton = document.getElementById("clearSelectionsButton");
     const saveStatus = document.getElementById("saveStatus");
@@ -446,7 +457,7 @@
           protein_target: proteinTargetInput.value,
           fiber_target: fiberTargetInput.value,
         });
-        return `/?${params.toString()}`;
+        return `/day?${params.toString()}`;
       }
 
     function setError(message) {
@@ -469,6 +480,7 @@
       let lockedSelections = new Array(data.meals.length).fill(null);
       let currentPlan = null;
       let savedSelections = data.savedSelections.slice();
+      let isEditing = false;
       let allowImmediateNavigation = false;
       let isSaving = false;
 
@@ -477,17 +489,18 @@
       }
 
       function hasUnsavedChanges() {
-        return currentPlan !== null && planKey(currentPlan) !== planKey(savedSelections);
+        return isEditing && currentPlan !== null && planKey(currentPlan) !== planKey(savedSelections);
       }
 
       function updateSaveUI() {
         const dirty = hasUnsavedChanges();
-        saveButton.disabled = isSaving || currentPlan === null || !dirty;
+        editButton.disabled = isSaving || isEditing;
+        saveButton.disabled = isSaving || !isEditing || currentPlan === null || !dirty;
         saveButton.style.opacity = saveButton.disabled ? "0.6" : "1";
         prevDateButton.disabled = isSaving;
         nextDateButton.disabled = isSaving;
         goDateButton.disabled = isSaving;
-        clearSelectionsButton.disabled = isSaving;
+        clearSelectionsButton.disabled = isSaving || !isEditing;
         dateInput.disabled = isSaving;
         proteinTargetInput.disabled = isSaving;
         fiberTargetInput.disabled = isSaving;
@@ -495,7 +508,11 @@
           saveStatus.textContent = "Saving...";
           return;
         }
-        saveStatus.textContent = dirty ? "Unsaved changes" : "Saved";
+        if (!isEditing) {
+          saveStatus.textContent = "Showing saved meals";
+          return;
+        }
+        saveStatus.textContent = dirty ? "Unsaved changes" : "Editing";
       }
 
       async function recomputeChooser() {
@@ -519,7 +536,8 @@
           data = await response.json();
           lockedSelections = new Array(data.meals.length).fill(null);
           savedSelections = data.savedSelections.slice();
-          history.replaceState(null, "", `/?${query.toString()}`);
+          isEditing = false;
+          history.replaceState(null, "", `/day?${query.toString()}`);
           updateDateLinks();
           setError("");
           render();
@@ -592,8 +610,8 @@
       }
 
       function renderSummary() {
-        currentPlan = bestPlanForCurrentLocks();
-        if (!currentPlan) {
+        currentPlan = isEditing ? bestPlanForCurrentLocks() : savedSelections.slice();
+        if (isEditing && !currentPlan) {
           setError("Current locked choices do not have any valid full-day completion.");
           return;
         }
@@ -606,7 +624,7 @@
           {
             label: "Calories",
             value: `${formatNumber(totals.calories)} kcal`,
-            subtle: "Projected best full day",
+            subtle: isEditing ? "Projected best full day" : "Currently saved full day",
           },
           {
             label: "Protein",
@@ -625,7 +643,9 @@
               totals.fiber + 1e-9 >= data.effectiveTargets.fiber
                 ? "Met"
                 : "Not met",
-            subtle: `${selectedCount} meal${selectedCount === 1 ? "" : "s"} selected by you`,
+            subtle: isEditing
+              ? `${selectedCount} meal${selectedCount === 1 ? "" : "s"} selected by you`
+              : "Saved selections from server",
           },
         ];
 
@@ -637,7 +657,9 @@
           </div>
         `).join("");
 
-        planCountLabel.textContent = `${data.date} · ${data.feasiblePlans.length} valid plan${data.feasiblePlans.length === 1 ? "" : "s"}`;
+        planCountLabel.textContent = isEditing
+          ? `${data.date} · ${data.feasiblePlans.length} valid plan${data.feasiblePlans.length === 1 ? "" : "s"}`
+          : `${data.date} · saved plan`;
         updateDateLinks();
         updateSaveUI();
         syncHeroSpacer();
@@ -648,6 +670,39 @@
         data.meals.forEach((meal, mealIndex) => {
           const section = document.createElement("section");
           section.className = "meal-section";
+          if (!isEditing) {
+            const savedOptionIndex = savedSelections[mealIndex];
+            const option = meal.options[savedOptionIndex];
+            const imageMarkup = option.imageUrl
+              ? `<img class="option-image" src="${option.imageUrl}" alt="${option.name}">`
+              : `<div class="option-placeholder">No photo</div>`;
+            section.innerHTML = `
+              <div class="meal-header">
+                <div>
+                  <h2>${meal.label}</h2>
+                  <p>Currently saved on the server</p>
+                </div>
+              </div>
+              <div class="options single-option">
+                <article class="option-card selected user-selected">
+                  ${imageMarkup}
+                  <div class="option-body">
+                    <div class="option-name">${option.name}</div>
+                    <div class="macro-row">
+                      <span class="pill">${formatNumber(option.calorific)} kcal</span>
+                      <span class="pill">${formatNumber(option.protein)} g protein</span>
+                      <span class="pill">${formatNumber(option.fiber)} g fiber</span>
+                    </div>
+                    <div class="card-actions">
+                      <div class="selection-status">Saved on server</div>
+                    </div>
+                  </div>
+                </article>
+              </div>
+            `;
+            mealsRoot.appendChild(section);
+            return;
+          }
           const rankedOptions = rankedOptionsForMeal(mealIndex);
           const selectedOptionIndex = currentPlan[mealIndex];
           const displayEntries = rankedOptions.slice(0, MAX_OPTIONS_PER_MEAL);
@@ -733,8 +788,8 @@
       }
 
       function render() {
-        const bestPlan = bestPlanForCurrentLocks();
-        if (!bestPlan) {
+        const bestPlan = isEditing ? bestPlanForCurrentLocks() : savedSelections.slice();
+        if (isEditing && !bestPlan) {
           setError("Current locked choices do not have any valid full-day completion.");
           syncHeroSpacer();
           return;
@@ -770,7 +825,8 @@
           }
           data = responsePayload.chooser;
           savedSelections = data.savedSelections.slice();
-          lockedSelections = currentPlan.slice();
+          lockedSelections = new Array(data.meals.length).fill(null);
+          isEditing = false;
           isSaving = false;
           setError("");
           render();
@@ -843,6 +899,15 @@
           event.preventDefault();
           recomputeChooser();
         }
+      });
+      editButton.addEventListener("click", () => {
+        if (isSaving || isEditing) {
+          return;
+        }
+        isEditing = true;
+        lockedSelections = new Array(data.meals.length).fill(null);
+        setError("");
+        render();
       });
       saveButton.addEventListener("click", saveCurrentPlan);
       clearSelectionsButton.addEventListener("click", () => {

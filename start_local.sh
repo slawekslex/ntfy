@@ -7,7 +7,11 @@ cd "$SCRIPT_DIR"
 args=("$@")
 
 if [[ " ${args[*]} " != *" --date "* ]]; then
-  args=(--date "${NTFY_DATE:-$(date +%F)}" "${args[@]}")
+  args=(--date "${NTFY_DATE:-$(date -d '+2 days' +%F)}" "${args[@]}")
+fi
+
+if [[ " ${args[*]} " != *" --port "* ]]; then
+  args=(--port "${NTFY_PORT:-5058}" "${args[@]}")
 fi
 
 exec python3 meal_chooser_web.py "${args[@]}"

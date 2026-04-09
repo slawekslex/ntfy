@@ -1,0 +1,204 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NTFY overview</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --panel: #171a21;
+      --panel-alt: #1d2230;
+      --text: #edf2ff;
+      --muted: #aeb8d6;
+      --accent: #7aa2ff;
+      --border: #2b3244;
+      --danger-bg: rgba(255, 140, 140, 0.14);
+      --danger-border: rgba(255, 140, 140, 0.45);
+      --shadow: rgba(0, 0, 0, 0.25);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, sans-serif;
+      background: linear-gradient(180deg, #0d1016 0%, #111522 100%);
+      color: var(--text);
+    }
+
+    .page {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .card {
+      background: rgba(23, 26, 33, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: 0 18px 50px var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+
+    .header {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      flex-wrap: wrap;
+      align-items: end;
+      margin-bottom: 18px;
+    }
+
+    .title {
+      display: grid;
+      gap: 6px;
+    }
+
+    .subtitle {
+      color: var(--muted);
+    }
+
+    .nav {
+      display: flex;
+      gap: 10px;
+      flex-wrap: wrap;
+    }
+
+    .button {
+      text-decoration: none;
+      color: var(--text);
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-weight: 600;
+    }
+
+    .button:hover {
+      border-color: rgba(122, 162, 255, 0.6);
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      white-space: nowrap;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 0.92rem;
+      font-weight: 600;
+    }
+
+    tbody tr {
+      cursor: pointer;
+      transition: background 120ms ease;
+    }
+
+    tbody tr:hover {
+      background: rgba(122, 162, 255, 0.08);
+    }
+
+    tbody tr.missing-targets {
+      background: var(--danger-bg);
+    }
+
+    tbody tr.missing-targets:hover {
+      background: rgba(255, 140, 140, 0.2);
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .error {
+      color: #ffd0d0;
+      max-width: 420px;
+      white-space: normal;
+    }
+
+    @media (max-width: 720px) {
+      .page {
+        padding: 14px;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="card">
+      <div class="header">
+        <div class="title">
+          <h1>{{ diet_name }} overview</h1>
+          <p class="subtitle">Saved meal totals for the next 3 weeks. Rows highlighted in red do not meet the default targets.</p>
+        </div>
+        <div class="nav">
+          <a class="button" href="/?start={{ prev_start }}">Previous 3 weeks</a>
+          <a class="button" href="/day?date={{ start_date }}">Open start day</a>
+          <a class="button" href="/?start={{ next_start }}">Next 3 weeks</a>
+        </div>
+      </div>
+
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Calories</th>
+              <th>Protein</th>
+              <th>Fiber</th>
+              <th>Status</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in overview_rows %}
+            <tr class="{{ '' if row.meets_targets else 'missing-targets' }}" data-href="/day?date={{ row.date }}">
+              <td>{{ row.date }}</td>
+              {% if row.no_diet %}
+              <td class="muted">-</td>
+              <td class="muted">-</td>
+              <td class="muted">-</td>
+              <td class="muted">No diet for that day</td>
+              {% elif row.error %}
+              <td class="muted">-</td>
+              <td class="muted">-</td>
+              <td class="muted">-</td>
+              <td class="error">{{ row.error }}</td>
+              {% else %}
+              <td>{{ row.calories }}</td>
+              <td>{{ row.protein }} / {{ row.protein_target }} g</td>
+              <td>{{ row.fiber }} / {{ row.fiber_target }} g</td>
+              <td>{{ 'Meets targets' if row.meets_targets else 'Below target' }}</td>
+              {% endif %}
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+    </section>
+  </div>
+
+  <script>
+    for (const row of document.querySelectorAll("tbody tr[data-href]")) {
+      row.addEventListener("click", () => {
+        window.location.assign(row.dataset.href);
+      });
+    }
+  </script>
+</body>
+</html>

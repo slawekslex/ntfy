@@ -4,17 +4,24 @@ from __future__ import annotations
 
 import argparse
 import json
+from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
 from typing import Dict, Tuple
 
 from flask import Flask, Response, abort, jsonify, render_template, request
 
 from ntfy_meals_lib import (
+    DELIVERY_EXPANSIONS,
+    NtfyClient,
     apply_optimal_plan_via_api,
     build_chooser_payload,
+    choose_delivery_diet_id,
     choices_from_indices,
     fetch_delivery_context,
     fetch_image_bytes,
+    load_json_config,
+    nutrition_aggregates_by_name,
+    read_caps_from_config,
     validate_date,
 )
 
@@ -105,8 +112,120 @@ def create_app(args: argparse.Namespace) -> Flask:
             (current + timedelta(days=1)).isoformat(),
         )
 
+    def build_overview_row(
+        date_str: str,
+        *,
+        delivery_diet_id: int,
+        protein_target_g: float,
+        fiber_target_g: float,
+        cookie_str: str,
+    ) -> dict:
+        try:
+            client = NtfyClient(explicit_cookie_str=cookie_str)
+            client.ensure_authenticated()
+            deliveries = client.get_data(
+                path=f"users/{client.user_id}/deliveries",
+                params={
+                    "date": date_str,
+                    "delivery_diet_id": str(delivery_diet_id),
+                    "status__in": "TO-BE-REALIZED,REALIZED",
+                    "aggregate_by__in": "nutritional_data:date",
+                    "expansions__in": DELIVERY_EXPANSIONS,
+                },
+            )
+            if not deliveries.get("results"):
+                return {
+                    "date": date_str,
+                    "calories": None,
+                    "protein": None,
+                    "fiber": None,
+                    "protein_target": protein_target_g,
+                    "fiber_target": fiber_target_g,
+                    "meets_targets": False,
+                    "no_diet": True,
+                    "error": None,
+                }
+            totals = nutrition_aggregates_by_name(deliveries)
+            calories = totals.get("calorific_kcal")
+            protein = totals.get("protein")
+            fiber = totals.get("fiber")
+            meets_targets = (
+                protein is not None
+                and fiber is not None
+                and protein + 1e-9 >= protein_target_g
+                and fiber + 1e-9 >= fiber_target_g
+            )
+            return {
+                "date": date_str,
+                "calories": calories,
+                "protein": protein,
+                "fiber": fiber,
+                "protein_target": protein_target_g,
+                "fiber_target": fiber_target_g,
+                "meets_targets": meets_targets,
+                "no_diet": False,
+                "error": None,
+            }
+        except Exception as exc:  # pylint: disable=broad-except
+            error_message = str(exc)
+            no_diet = error_message.startswith("No deliveries found for the requested date/diet")
+            return {
+                "date": date_str,
+                "calories": None,
+                "protein": None,
+                "fiber": None,
+                "protein_target": None,
+                "fiber_target": None,
+                "meets_targets": False,
+                "no_diet": no_diet,
+                "error": None if no_diet else error_message,
+            }
+
     @app.get("/")
-    def index() -> str:
+    def overview() -> str:
+        start_date = request.args.get("start", args.date)
+        validate_date(start_date)
+        start = datetime.strptime(start_date, "%Y-%m-%d").date()
+        config_data = load_json_config(args.config)
+        protein_target_g, fiber_target_g = read_caps_from_config(config_data)
+        base_client = NtfyClient(explicit_cookie_str=args.cookies)
+        base_client.ensure_authenticated()
+        delivery_diets = base_client.get_data(
+            path=f"users/{base_client.user_id}/delivery-diets",
+            params={
+                "last_delivery_day__gte": start_date,
+                "sort": "first_delivery_day.asc",
+                "expansions__in": "diets",
+            },
+        )
+        delivery_diet_id = choose_delivery_diet_id(delivery_diets, args.diet_name)
+        overview_dates = [(start + timedelta(days=offset)).isoformat() for offset in range(21)]
+        with ThreadPoolExecutor(max_workers=min(8, len(overview_dates))) as executor:
+            rows = list(
+                executor.map(
+                    lambda date_str: build_overview_row(
+                        date_str,
+                        delivery_diet_id=delivery_diet_id,
+                        protein_target_g=protein_target_g,
+                        fiber_target_g=fiber_target_g,
+                        cookie_str=base_client.cookie_str or "",
+                    ),
+                    overview_dates,
+                )
+            )
+        prev_start = (start - timedelta(days=21)).isoformat()
+        next_start = (start + timedelta(days=21)).isoformat()
+        return render_template(
+            "overview.html",
+            overview_rows=rows,
+            start_date=start_date,
+            prev_start=prev_start,
+            next_start=next_start,
+            diet_name=args.diet_name,
+        )
+
+    @app.get("/day")
+    def day_view() -> str:
         current_date = request.args.get("date", args.date)
         error_message = None
         chooser_payload = None
