@@ -8,7 +8,13 @@ Usage:
   python ntfy_meals_nutrition.py --date 2026-04-11 --cookies "PHPSESSID=...; session=...; user_id=..."
 
 Authentication:
-  Provide cookie string via:
+  Reuses cached cookies from .ntfy_cookie_cache.json when still valid.
+  Only logs in again when cached/input cookies are missing or expired.
+
+  Preferred:
+  - USER_NAME + PASSWORD in .env, using browser login flow
+
+  Fallback:
   - --cookies argument, OR
   - NTFY_COOKIES environment variable
 
@@ -23,21 +29,24 @@ Config:
 from __future__ import annotations
 
 import argparse
+import base64
 import json
 import os
 import sys
+import time
 import urllib.parse
 import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
-from typing import Dict, List
+from typing import Dict, List, Optional
 
 import requests
 
 
 ORION_BASE = "https://orion-api.ntfy.pl/api/v2.0"
 MEAL_ORDER = ["BREAKFAST", "SECOND-BREAKFAST", "LUNCH", "TEA", "DINNER"]
+CACHE_FILE = ".ntfy_cookie_cache.json"
 
 
 @dataclass
@@ -62,6 +71,11 @@ def parse_args() -> argparse.Namespace:
             "Compute optimal day plan (one option per meal) using dynamic programming with priorities: "
             "1) maximize protein up to 150g, 2) maximize fiber up to 40g, 3) minimize calories."
         ),
+    )
+    parser.add_argument(
+        "--apply-optimal",
+        action="store_true",
+        help="Apply optimal plan on NTFY webpage automatically.",
     )
     parser.add_argument(
         "--cookies",
@@ -108,6 +122,12 @@ def load_env_file(path: str = ".env") -> Dict[str, str]:
     return env_vars
 
 
+def credentials_from_env(env_vars: Dict[str, str]) -> tuple[Optional[str], Optional[str]]:
+    username = env_vars.get("USER_NAME") or env_vars.get("NTFY_USER_NAME")
+    password = env_vars.get("PASSWORD") or env_vars.get("NTFY_PASSWORD")
+    return username, password
+
+
 def validate_date(date_str: str) -> None:
     try:
         datetime.strptime(date_str, "%Y-%m-%d")
@@ -125,6 +145,43 @@ def parse_cookie_string(cookie_str: str) -> Dict[str, str]:
     return cookies
 
 
+def cookie_dict_to_string(cookies: Dict[str, str]) -> str:
+    return "; ".join(f"{k}={v}" for k, v in cookies.items())
+
+
+def load_cookie_cache(path: str = CACHE_FILE) -> Optional[str]:
+    if not os.path.exists(path):
+        return None
+    try:
+        with open(path, "r", encoding="utf-8") as cache_file:
+            payload = json.load(cache_file)
+    except Exception:  # pylint: disable=broad-except
+        return None
+    cookie_str = payload.get("cookie_str")
+    if isinstance(cookie_str, str) and cookie_str.strip():
+        return cookie_str.strip()
+    return None
+
+
+def save_cookie_cache(cookie_str: str, path: str = CACHE_FILE) -> None:
+    payload = {
+        "cookie_str": cookie_str,
+        "cached_at": datetime.now().isoformat(timespec="seconds"),
+    }
+    with open(path, "w", encoding="utf-8") as cache_file:
+        json.dump(payload, cache_file, ensure_ascii=False, indent=2)
+
+
+def decode_jwt_payload(token: str) -> dict:
+    parts = token.split(".")
+    if len(parts) != 3:
+        raise ValueError("JWT token must have three parts.")
+    payload_b64 = parts[1]
+    payload_b64 += "=" * (-len(payload_b64) % 4)
+    payload_bytes = base64.urlsafe_b64decode(payload_b64.encode("ascii"))
+    return json.loads(payload_bytes.decode("utf-8"))
+
+
 def session_from_cookies(cookies: Dict[str, str]) -> SessionData:
     if "session" not in cookies:
         raise ValueError("Missing 'session' cookie.")
@@ -137,6 +194,17 @@ def session_from_cookies(cookies: Dict[str, str]) -> SessionData:
     return SessionData(token=token, user_id=user_id)
 
 
+def cookie_str_is_expired(cookie_str: str, skew_seconds: int = 60) -> bool:
+    try:
+        cookies = parse_cookie_string(cookie_str)
+        session = session_from_cookies(cookies)
+        payload = decode_jwt_payload(session.token)
+        exp = int(payload["exp"])
+    except Exception:  # pylint: disable=broad-except
+        return True
+    return exp <= int(time.time()) + skew_seconds
+
+
 def request_headers(token: str) -> Dict[str, str]:
     return {
         "Authorization": f"Bearer {token}",
@@ -147,6 +215,80 @@ def request_headers(token: str) -> Dict[str, str]:
     }
 
 
+def login_via_api(username: str, password: str) -> str:
+    print("[AUTH] Logging in via Orion API...")
+    session = requests.Session()
+    session.trust_env = False
+    response = session.post(
+        f"{ORION_BASE}/sessions",
+        json={"email": username, "password": password},
+        headers={
+            "Api-Language": "pl",
+            "Trace-Id": str(uuid.uuid4()),
+            "Accept": "application/json, text/plain, */*",
+            "User-Agent": "Mozilla/5.0",
+        },
+        timeout=30,
+    )
+    response.raise_for_status()
+    data = response.json()["data"]
+    token = data["token"]
+    refresh_token = data["refresh_token"]
+    jwt_payload = decode_jwt_payload(token)
+    user_id = int(jwt_payload["id"])
+    session_cookie = urllib.parse.quote(
+        json.dumps(
+            {
+                "token": token,
+                "refreshToken": refresh_token,
+                "userId": user_id,
+                "firstName": jwt_payload.get("first_name", ""),
+            },
+            separators=(",", ":"),
+        )
+    )
+    return cookie_dict_to_string({"session": session_cookie, "user_id": str(user_id)})
+
+
+def resolve_cookie_string(
+    *,
+    explicit_cookie_str: Optional[str],
+    env_cookie_str: Optional[str],
+    username: Optional[str],
+    password: Optional[str],
+) -> str:
+    if explicit_cookie_str:
+        if not cookie_str_is_expired(explicit_cookie_str):
+            print("[AUTH] Using cookies from --cookies.")
+            return explicit_cookie_str
+        print("[AUTH] Cookies from --cookies are expired.")
+
+    cached_cookie_str = load_cookie_cache()
+    if cached_cookie_str:
+        if not cookie_str_is_expired(cached_cookie_str):
+            print(f"[AUTH] Using cached cookies from {CACHE_FILE}.")
+            return cached_cookie_str
+        print(f"[AUTH] Cached cookies in {CACHE_FILE} are expired.")
+
+    if env_cookie_str:
+        if not cookie_str_is_expired(env_cookie_str):
+            print("[AUTH] Using cookies from environment/.env.")
+            save_cookie_cache(env_cookie_str)
+            return env_cookie_str
+        print("[AUTH] Cookies from environment/.env are expired.")
+
+    if username and password:
+        fresh_cookie_str = login_via_api(username, password)
+        save_cookie_cache(fresh_cookie_str)
+        print(f"[AUTH] Saved fresh cookies to {CACHE_FILE}.")
+        return fresh_cookie_str
+
+    raise ValueError(
+        "No valid cookies available. Provide USER_NAME/PASSWORD, or pass unexpired cookies via --cookies, "
+        "NTFY_COOKIES, or .env."
+    )
+
+
 def api_get(
     path: str,
     token: str,
@@ -154,7 +296,9 @@ def api_get(
     params: Dict[str, str],
 ) -> dict:
     url = f"{ORION_BASE}/{path.lstrip('/')}"
-    response = requests.get(
+    session = requests.Session()
+    session.trust_env = False
+    response = session.get(
         url,
         params=params,
         headers=request_headers(token),
@@ -164,6 +308,26 @@ def api_get(
     response.raise_for_status()
     payload = response.json()
     return payload["data"]
+
+
+def api_patch(
+    path: str,
+    token: str,
+    cookies: Dict[str, str],
+    payload: Dict[str, object],
+) -> dict:
+    url = f"{ORION_BASE}/{path.lstrip('/')}"
+    session = requests.Session()
+    session.trust_env = False
+    response = session.patch(
+        url,
+        json=payload,
+        headers=request_headers(token),
+        cookies=cookies,
+        timeout=30,
+    )
+    response.raise_for_status()
+    return response.json()["data"]
 
 
 def choose_delivery_diet_id(data: dict, diet_name: str) -> int:
@@ -206,6 +370,17 @@ def markdown_table(title: str, rows: List[dict]) -> str:
         lines.append(f"| {name} | {kcal} | {protein} | {fiber} |")
     lines.append("")
     return "\n".join(lines)
+
+
+def nutrition_totals(choices: List[dict]) -> dict:
+    calories = 0.0
+    protein = 0.0
+    fiber = 0.0
+    for row in choices:
+        calories += float(row.get("calorific") or 0)
+        protein += float(row.get("protein") or 0)
+        fiber += float(row.get("fiber") or 0)
+    return {"calories": round(calories, 1), "protein": round(protein, 1), "fiber": round(fiber, 1)}
 
 
 def compute_optimal_plan(
@@ -260,6 +435,9 @@ def compute_optimal_plan(
                             "calorific": option["calorific"],
                             "protein": option["protein"],
                             "fiber": option["fiber"],
+                            "simple_product_id": option.get("simple_product_id"),
+                            "delivery_item_id": option.get("delivery_item_id"),
+                            "selected": option.get("selected", False),
                         }
                     ],
                 }
@@ -287,7 +465,83 @@ def compute_optimal_plan(
     }
 
 
-def build_rows_by_meal(delivery_payload: dict) -> Dict[str, List[dict]]:
+def selected_products_by_meal(delivery_payload: dict) -> Dict[str, str]:
+    includes = delivery_payload.get("includes", {})
+    results = delivery_payload.get("results", [])
+    if not results:
+        return {}
+
+    delivery_id = results[0]["id"]
+    items = [x for x in includes.get("delivery_items", []) if x.get("delivery_id") == delivery_id]
+    products = {x["id"]: x for x in includes.get("simple_products", [])}
+    meals = {x["id"]: x for x in includes.get("diet_variant_meals", [])}
+    meal_types = {x["id"]: x for x in includes.get("diet_variant_meal_types", [])}
+
+    out = {}
+    for item in items:
+        meal = meals.get(item.get("diet_variant_meal_id"))
+        if not meal:
+            continue
+        meal_type = meal_types.get(meal.get("diet_variant_meal_type_id"), {})
+        meal_label = (meal_type.get("meal_name", {}) or {}).get("value")
+        if not meal_label:
+            continue
+        product_name = (products.get(item.get("simple_product_id")) or {}).get("name")
+        if product_name:
+            out[meal_label] = product_name
+    return out
+
+
+def nutrition_aggregates_by_name(delivery_payload: dict) -> Dict[str, float]:
+    out: Dict[str, float] = {}
+    for row in delivery_payload.get("aggregates", []):
+        name = row.get("name")
+        value = row.get("value")
+        if not name or value is None:
+            continue
+        try:
+            out[str(name)] = float(value)
+        except (TypeError, ValueError):
+            continue
+    return out
+
+
+def apply_optimal_plan_via_api(
+    *,
+    token: str,
+    user_id: int,
+    delivery_id: int,
+    cookies: Dict[str, str],
+    choices: List[dict],
+) -> dict:
+    failures = []
+    for idx, choice in enumerate(choices, start=1):
+        meal = str(choice["meal"])
+        option = str(choice["name"])
+        item_id = choice.get("delivery_item_id")
+        product_id = choice.get("simple_product_id")
+        if not item_id or not product_id:
+            failures.append(f"Missing delivery_item_id/simple_product_id for {meal}: {option}")
+            continue
+        if choice.get("selected"):
+            print(f"[APPLY] {idx}/{len(choices)} Already selected for {meal}.")
+            continue
+        print(f"[APPLY] {idx}/{len(choices)} Applying {meal}: {option}")
+        try:
+            api_patch(
+                path=f"users/{user_id}/deliveries/{delivery_id}/items/{item_id}",
+                token=token,
+                cookies=cookies,
+                payload={"simple_product_id": int(product_id)},
+            )
+        except Exception as exc:  # pylint: disable=broad-except
+            msg = f"Failed applying {meal}: {option} ({exc})"
+            print(f"[WARN] {msg}")
+            failures.append(msg)
+    return {"failures": failures, "page_nutrition": {}}
+
+
+def build_rows_by_meal(delivery_payload: dict) -> tuple[int, Dict[str, List[dict]]]:
     results = delivery_payload.get("results", [])
     if not results:
         raise ValueError("No deliveries found for the requested date/diet.")
@@ -304,7 +558,7 @@ def build_rows_by_meal(delivery_payload: dict) -> Dict[str, List[dict]]:
         for x in includes.get("alternative_meals", [])
     }
 
-    product_ids_by_meal_key: Dict[str, List[int]] = defaultdict(list)
+    product_rows_by_meal_key: Dict[str, List[dict]] = defaultdict(list)
     meal_labels: Dict[str, str] = {}
 
     for item in delivery_items:
@@ -319,20 +573,25 @@ def build_rows_by_meal(delivery_payload: dict) -> Dict[str, List[dict]]:
             continue
 
         meal_labels[meal_key] = meal_value
-        product_ids_by_meal_key[meal_key].append(item.get("simple_product_id"))
-        product_ids_by_meal_key[meal_key].extend(alternatives.get(item["id"], []))
+        option_ids = [item.get("simple_product_id"), *alternatives.get(item["id"], [])]
+        seen_ids = set()
+        for pid in option_ids:
+            if not pid or pid in seen_ids:
+                continue
+            seen_ids.add(pid)
+            product_rows_by_meal_key[meal_key].append(
+                {
+                    "simple_product_id": pid,
+                    "delivery_item_id": item["id"],
+                    "selected": pid == item.get("simple_product_id"),
+                }
+            )
 
     rows_by_meal: Dict[str, List[dict]] = {}
-    for meal_key, ids in product_ids_by_meal_key.items():
-        seen = set()
-        unique_ids = []
-        for pid in ids:
-            if pid and pid not in seen:
-                seen.add(pid)
-                unique_ids.append(pid)
-
+    for meal_key, product_rows in product_rows_by_meal_key.items():
         rows = []
-        for pid in unique_ids:
+        for product_row in product_rows:
+            pid = product_row["simple_product_id"]
             product = products.get(pid)
             if not product:
                 continue
@@ -342,6 +601,9 @@ def build_rows_by_meal(delivery_payload: dict) -> Dict[str, List[dict]]:
                     "calorific": product.get("calorific"),
                     "protein": product.get("protein"),
                     "fiber": product.get("fiber"),
+                    "simple_product_id": pid,
+                    "delivery_item_id": product_row["delivery_item_id"],
+                    "selected": product_row["selected"],
                 }
             )
         rows.sort(key=lambda r: (r.get("name") or ""))
@@ -368,7 +630,7 @@ def build_rows_by_meal(delivery_payload: dict) -> Dict[str, List[dict]]:
         if label not in ordered:
             ordered[label] = rows
 
-    return ordered
+    return delivery_id, ordered
 
 
 def main() -> int:
@@ -378,12 +640,17 @@ def main() -> int:
     protein_cap_g, fiber_cap_g = read_caps_from_config(config_data)
 
     env_file_vars = load_env_file(".env")
-    cookie_str = args.cookies or os.getenv("NTFY_COOKIES") or env_file_vars.get("NTFY_COOKIES")
-    if not cookie_str:
-        print(
-            "Error: provide cookies via --cookies, NTFY_COOKIES env var, or .env file.",
-            file=sys.stderr,
+    username, password = credentials_from_env(env_file_vars)
+    env_cookie_str = os.getenv("NTFY_COOKIES") or env_file_vars.get("NTFY_COOKIES")
+    try:
+        cookie_str = resolve_cookie_string(
+            explicit_cookie_str=args.cookies,
+            env_cookie_str=env_cookie_str,
+            username=username,
+            password=password,
         )
+    except ValueError as exc:
+        print(f"Error: {exc}", file=sys.stderr)
         return 1
 
     cookies = parse_cookie_string(cookie_str)
@@ -410,6 +677,7 @@ def main() -> int:
             "date": args.date,
             "delivery_diet_id": str(delivery_diet_id),
             "status__in": "TO-BE-REALIZED,REALIZED",
+            "aggregate_by__in": "nutritional_data:date",
             "expansions__in": (
                 "address_id,delivery_items,delivery_items.simple_products,"
                 "delivery_items.diet_variant_meals,"
@@ -422,7 +690,7 @@ def main() -> int:
         },
     )
 
-    rows_by_meal = build_rows_by_meal(deliveries)
+    delivery_id, rows_by_meal = build_rows_by_meal(deliveries)
 
     print(f"# Nutrition table for {args.diet_name} on {args.date}")
     print("")
@@ -430,7 +698,7 @@ def main() -> int:
         if rows:
             print(markdown_table(meal_label, rows))
 
-    if args.optimal_plan:
+    if args.optimal_plan or args.apply_optimal:
         plan = compute_optimal_plan(rows_by_meal, protein_cap_g=protein_cap_g, fiber_cap_g=fiber_cap_g)
         print("## Optimal day plan")
         print("")
@@ -449,6 +717,92 @@ def main() -> int:
             f"protein {plan['protein_raw']}g (capped objective: {plan['protein_capped']}g/{protein_cap_g}g), "
             f"fiber {plan['fiber_raw']}g (capped objective: {plan['fiber_capped']}g/{fiber_cap_g}g)."
         )
+
+        if args.apply_optimal:
+            print("")
+            print("[INFO] Applying optimal plan via NTFY API...")
+            apply_result = apply_optimal_plan_via_api(
+                token=session.token,
+                user_id=session.user_id,
+                delivery_id=delivery_id,
+                cookies=cookies,
+                choices=plan["choices"],
+            )
+
+            print("[INFO] Validating saved selections via API...")
+            refreshed_deliveries = api_get(
+                path=f"users/{session.user_id}/deliveries",
+                token=session.token,
+                cookies=cookies,
+                params={
+                    "date": args.date,
+                    "delivery_diet_id": str(delivery_diet_id),
+                    "status__in": "TO-BE-REALIZED,REALIZED",
+                    "aggregate_by__in": "nutritional_data:date",
+                    "expansions__in": (
+                        "address_id,delivery_items,delivery_items.simple_products,"
+                        "delivery_items.diet_variant_meals,"
+                        "delivery_items.diet_variant_meals.diet_variant_meal_types,"
+                        "delivery_items.alternative_meals,"
+                        "delivery_items.simple_products.product_labels,"
+                        "delivery_items.simple_products.product_badges,"
+                        "delivery_items.simple_products.badges"
+                    ),
+                },
+            )
+            selected_now = selected_products_by_meal(refreshed_deliveries)
+            aggregate_totals = nutrition_aggregates_by_name(refreshed_deliveries)
+            expected = {c["meal"]: c["name"] for c in plan["choices"]}
+
+            mismatches = []
+            for meal, expected_name in expected.items():
+                actual = selected_now.get(meal)
+                if actual != expected_name:
+                    mismatches.append((meal, expected_name, actual))
+
+            if apply_result["failures"]:
+                print("[WARN] Some selection steps failed during API apply:")
+                for msg in apply_result["failures"]:
+                    print(f"  - {msg}")
+
+            if mismatches:
+                print("[WARN] Validation mismatch after save:")
+                for meal, exp, act in mismatches:
+                    print(f"  - {meal}: expected '{exp}' but page/API has '{act}'")
+            else:
+                print("[OK] All meals were selected as planned.")
+
+            expected_totals = nutrition_totals(plan["choices"])
+            print(
+                "[CHECK] Script totals: "
+                f"{expected_totals['calories']} kcal, "
+                f"{expected_totals['protein']} g protein, "
+                f"{expected_totals['fiber']} g fiber."
+            )
+            if aggregate_totals:
+                print(
+                    "[CHECK] NTFY totals: "
+                    f"{aggregate_totals.get('calorific_kcal', 'n/a')} kcal, "
+                    f"{aggregate_totals.get('protein', 'n/a')} g protein, "
+                    f"{aggregate_totals.get('fiber', 'n/a')} g fiber."
+                )
+                total_mismatches = []
+                total_mapping = {
+                    "calories": "calorific_kcal",
+                    "protein": "protein",
+                    "fiber": "fiber",
+                }
+                for local_name, aggregate_name in total_mapping.items():
+                    actual_value = aggregate_totals.get(aggregate_name)
+                    expected_value = expected_totals[local_name]
+                    if actual_value is None or abs(actual_value - expected_value) > 0.11:
+                        total_mismatches.append((local_name, expected_value, actual_value))
+                if total_mismatches:
+                    print("[WARN] Nutrition total mismatch after save:")
+                    for name, expected_value, actual_value in total_mismatches:
+                        print(f"  - {name}: expected {expected_value}, NTFY has {actual_value}")
+                else:
+                    print("[OK] Nutrition totals match NTFY aggregates.")
 
     return 0
 
