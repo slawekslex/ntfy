@@ -1,0 +1,862 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>NTFY meal chooser</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --panel: #171a21;
+      --panel-alt: #1d2230;
+      --text: #edf2ff;
+      --muted: #aeb8d6;
+      --accent: #7aa2ff;
+      --accent-2: #8ef0c6;
+      --border: #2b3244;
+      --shadow: rgba(0, 0, 0, 0.25);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, sans-serif;
+      background: linear-gradient(180deg, #0d1016 0%, #111522 100%);
+      color: var(--text);
+    }
+
+    .page {
+      max-width: 1380px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .hero {
+      margin-bottom: 24px;
+    }
+
+    .hero-card {
+      background: rgba(23, 26, 33, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: 0 18px 50px var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+
+    .hero-card.sticky-main-bar {
+      position: fixed;
+      top: 12px;
+      left: 50%;
+      transform: translateX(-50%);
+      width: min(1380px, calc(100vw - 48px));
+      z-index: 40;
+      background: rgba(23, 26, 33, 0.96);
+    }
+
+    h1, h2, p {
+      margin: 0;
+    }
+
+    .meal-header p,
+    .footer-note {
+      color: var(--muted);
+    }
+
+    .toolbar {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+      justify-content: space-between;
+      margin-top: 16px;
+    }
+
+    .toolbar-right,
+    .date-form,
+    .date-nav {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .nav-button,
+    .jump-button {
+      text-decoration: none;
+      color: var(--text);
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-weight: 600;
+    }
+
+    .nav-button:hover,
+    .jump-button:hover {
+      border-color: rgba(122, 162, 255, 0.6);
+    }
+
+    .nav-arrow {
+      min-width: 44px;
+      text-align: center;
+      padding: 10px 0;
+      font-size: 1.1rem;
+      line-height: 1;
+    }
+
+    .date-input {
+      background: #111623;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 12px;
+      font: inherit;
+    }
+
+    .toolbar-label {
+      color: var(--muted);
+      font-size: 0.92rem;
+    }
+
+    .save-status {
+      color: var(--muted);
+      font-size: 0.9rem;
+    }
+
+    .target-controls {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      align-items: center;
+    }
+
+    .target-field {
+      display: grid;
+      gap: 6px;
+    }
+
+    .target-field label {
+      color: var(--muted);
+      font-size: 0.84rem;
+    }
+
+    .target-input {
+      width: 110px;
+    }
+
+    .summary-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(180px, 1fr));
+      gap: 12px;
+      margin-top: 16px;
+    }
+
+    .metric {
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      border-radius: 14px;
+      padding: 14px;
+    }
+
+    .metric-label {
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin-bottom: 8px;
+    }
+
+    .metric-value {
+      font-size: 1.45rem;
+      font-weight: 700;
+    }
+
+    .metric-subtle {
+      color: var(--muted);
+      font-size: 0.92rem;
+      margin-top: 6px;
+    }
+
+    .meals {
+      display: grid;
+      gap: 22px;
+    }
+
+    .meal-section {
+      background: rgba(23, 26, 33, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 18px;
+      box-shadow: 0 18px 50px var(--shadow);
+    }
+
+    .meal-header {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 10px;
+      justify-content: space-between;
+      align-items: baseline;
+      margin-bottom: 14px;
+    }
+
+    .options {
+      display: grid;
+      grid-template-columns: repeat(auto-fit, minmax(240px, 1fr));
+      gap: 14px;
+    }
+
+    .options.single-option {
+      grid-template-columns: minmax(240px, 420px);
+    }
+
+    .option-card {
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      background: #111623;
+      cursor: pointer;
+      transition: transform 140ms ease, border-color 140ms ease, box-shadow 140ms ease;
+      display: flex;
+      flex-direction: column;
+      min-height: 100%;
+    }
+
+    .option-card:hover {
+      transform: translateY(-1px);
+      border-color: rgba(122, 162, 255, 0.6);
+    }
+
+    .option-card.selected {
+      border-color: var(--accent);
+      box-shadow: 0 0 0 1px rgba(122, 162, 255, 0.45);
+    }
+
+    .option-card.user-selected {
+      border-color: var(--accent-2);
+      box-shadow: 0 0 0 1px rgba(142, 240, 198, 0.35);
+    }
+
+    .option-card[hidden] {
+      display: none !important;
+    }
+
+    .option-image,
+    .option-placeholder {
+      width: 100%;
+      aspect-ratio: 4 / 3;
+      background: linear-gradient(135deg, #232939, #141922);
+    }
+
+    .option-image {
+      object-fit: cover;
+      display: block;
+    }
+
+    .option-placeholder {
+      color: var(--muted);
+      display: grid;
+      place-items: center;
+      font-size: 0.95rem;
+      letter-spacing: 0.02em;
+    }
+
+    .option-body {
+      padding: 14px;
+      display: grid;
+      gap: 10px;
+      height: 100%;
+    }
+
+    .option-name {
+      font-size: 1rem;
+      line-height: 1.35;
+      font-weight: 600;
+    }
+
+    .macro-row {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 8px;
+    }
+
+    .pill {
+      display: inline-flex;
+      align-items: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      color: var(--muted);
+      font-size: 0.88rem;
+    }
+
+    .selection-status {
+      color: var(--accent-2);
+      font-size: 0.9rem;
+      font-weight: 600;
+    }
+
+    .card-actions {
+      display: flex;
+      gap: 8px;
+      flex-wrap: wrap;
+      align-items: center;
+      justify-content: space-between;
+    }
+
+    .small-button {
+      color: var(--text);
+      background: transparent;
+      border: 1px solid var(--border);
+      border-radius: 999px;
+      padding: 6px 10px;
+      font: inherit;
+      cursor: pointer;
+    }
+
+    .small-button:hover {
+      border-color: rgba(122, 162, 255, 0.6);
+    }
+
+    .footer-note {
+      margin-top: 24px;
+      font-size: 0.94rem;
+      line-height: 1.5;
+    }
+
+    .error-box {
+      margin-top: 16px;
+      padding: 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 140, 140, 0.35);
+      background: rgba(255, 140, 140, 0.1);
+      color: #ffd0d0;
+      line-height: 1.45;
+    }
+
+    @media (max-width: 720px) {
+      .page {
+        padding: 14px;
+      }
+
+      .hero-card.sticky-main-bar {
+        width: calc(100vw - 28px);
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="hero">
+      <div id="heroSpacer"></div>
+      <div class="hero-card sticky-main-bar" id="heroCard">
+          <div class="toolbar">
+            <div class="toolbar-right">
+              <span class="toolbar-label">{{ diet_name }}</span>
+              <div class="date-form">
+                <div class="date-nav">
+                  <button class="nav-button nav-arrow" id="prevDateButton" type="button" aria-label="Previous day">&#8592;</button>
+                  <input class="date-input" id="dateInput" type="date" name="date" value="{{ current_date }}">
+                  <button class="nav-button nav-arrow" id="nextDateButton" type="button" aria-label="Next day">&#8594;</button>
+                </div>
+                <div class="target-controls">
+                  <div class="target-field">
+                    <label for="proteinTargetInput">Protein target</label>
+                    <input class="date-input target-input" id="proteinTargetInput" type="number" min="0.1" step="0.1" name="protein_target" value="{{ current_protein_target }}">
+                  </div>
+                  <div class="target-field">
+                    <label for="fiberTargetInput">Fiber target</label>
+                    <input class="date-input target-input" id="fiberTargetInput" type="number" min="0.1" step="0.1" name="fiber_target" value="{{ current_fiber_target }}">
+                  </div>
+                </div>
+                <button class="jump-button" id="goDateButton" type="button">Go</button>
+              </div>
+              <button class="small-button" type="button" id="saveButton">Save</button>
+              <button class="small-button" type="button" id="clearSelectionsButton">Unselect all</button>
+              <span class="save-status" id="saveStatus"></span>
+              <span class="save-status" id="planCountLabel"></span>
+            </div>
+          </div>
+          <div class="error-box" id="errorBox" {% if not error_message %}hidden{% endif %}>
+            {% if error_message %}
+            {{ error_message }}
+            {% endif %}
+          </div>
+        <div class="summary-grid" id="summaryGrid"></div>
+      </div>
+    </section>
+    <section class="meals" id="mealsRoot"></section>
+    <p class="footer-note">
+      Each meal shows a few best options given the meals you selected so far. Picking one meal recomputes the recommendations for the remaining meals.
+    </p>
+  </div>
+
+  <script>
+    let data = {{ page_data_json | safe }};
+    const currentDateDefault = "{{ current_date }}";
+    const mealsRoot = document.getElementById("mealsRoot");
+    const summaryGrid = document.getElementById("summaryGrid");
+    const planCountLabel = document.getElementById("planCountLabel");
+    const errorBox = document.getElementById("errorBox");
+    const heroCard = document.getElementById("heroCard");
+    const heroSpacer = document.getElementById("heroSpacer");
+    const dateInput = document.getElementById("dateInput");
+    const prevDateButton = document.getElementById("prevDateButton");
+    const nextDateButton = document.getElementById("nextDateButton");
+    const goDateButton = document.getElementById("goDateButton");
+    const proteinTargetInput = document.getElementById("proteinTargetInput");
+    const fiberTargetInput = document.getElementById("fiberTargetInput");
+    const saveButton = document.getElementById("saveButton");
+    const clearSelectionsButton = document.getElementById("clearSelectionsButton");
+    const saveStatus = document.getElementById("saveStatus");
+
+    function formatNumber(value) {
+      return Number(value).toFixed(1).replace(/\.0$/, "");
+    }
+
+    function formatLocalDate(date) {
+      const year = date.getFullYear();
+      const month = String(date.getMonth() + 1).padStart(2, "0");
+      const day = String(date.getDate()).padStart(2, "0");
+      return `${year}-${month}-${day}`;
+    }
+
+    function syncHeroSpacer() {
+      heroSpacer.style.height = `${heroCard.getBoundingClientRect().height + 12}px`;
+    }
+
+    function updateDateLinks() {
+      const current = new Date(`${dateInput.value}T00:00:00`);
+      if (Number.isNaN(current.getTime())) {
+        return;
+      }
+      const prev = new Date(current);
+      prev.setDate(prev.getDate() - 1);
+      const next = new Date(current);
+      next.setDate(next.getDate() + 1);
+      prevDateButton.dataset.targetDate = formatLocalDate(prev);
+      nextDateButton.dataset.targetDate = formatLocalDate(next);
+    }
+
+      function buildNavigationUrl(dateValue) {
+        const params = new URLSearchParams({
+          date: dateValue,
+          protein_target: proteinTargetInput.value,
+          fiber_target: fiberTargetInput.value,
+        });
+        return `/?${params.toString()}`;
+      }
+
+    function setError(message) {
+      if (!message) {
+        errorBox.hidden = true;
+        errorBox.textContent = "";
+        return;
+      }
+      errorBox.hidden = false;
+      errorBox.textContent = message;
+    }
+
+    if (!data) {
+      planCountLabel.textContent = "";
+      summaryGrid.innerHTML = "";
+      updateDateLinks();
+      syncHeroSpacer();
+    } else {
+      const MAX_OPTIONS_PER_MEAL = 4;
+      let lockedSelections = new Array(data.meals.length).fill(null);
+      let currentPlan = null;
+      let savedSelections = data.savedSelections.slice();
+      let allowImmediateNavigation = false;
+      let isSaving = false;
+
+      function planKey(plan) {
+        return (plan || []).join("-");
+      }
+
+      function hasUnsavedChanges() {
+        return currentPlan !== null && planKey(currentPlan) !== planKey(savedSelections);
+      }
+
+      function updateSaveUI() {
+        const dirty = hasUnsavedChanges();
+        saveButton.disabled = isSaving || currentPlan === null || !dirty;
+        saveButton.style.opacity = saveButton.disabled ? "0.6" : "1";
+        prevDateButton.disabled = isSaving;
+        nextDateButton.disabled = isSaving;
+        goDateButton.disabled = isSaving;
+        clearSelectionsButton.disabled = isSaving;
+        dateInput.disabled = isSaving;
+        proteinTargetInput.disabled = isSaving;
+        fiberTargetInput.disabled = isSaving;
+        if (isSaving) {
+          saveStatus.textContent = "Saving...";
+          return;
+        }
+        saveStatus.textContent = dirty ? "Unsaved changes" : "Saved";
+      }
+
+      async function recomputeChooser() {
+        if (isSaving) {
+          return;
+        }
+        const dateValue = dateInput.value || currentDateDefault;
+        const proteinValue = proteinTargetInput.value;
+        const fiberValue = fiberTargetInput.value;
+        const query = new URLSearchParams({
+          date: dateValue,
+          protein_target: proteinValue,
+          fiber_target: fiberValue,
+        });
+        try {
+          const response = await fetch(`/api/chooser?${query.toString()}`);
+          if (!response.ok) {
+            const text = await response.text();
+            throw new Error(text || "Failed to recompute chooser.");
+          }
+          data = await response.json();
+          lockedSelections = new Array(data.meals.length).fill(null);
+          savedSelections = data.savedSelections.slice();
+          history.replaceState(null, "", `/?${query.toString()}`);
+          updateDateLinks();
+          setError("");
+          render();
+        } catch (error) {
+          setError(error.message || "Failed to recompute chooser.");
+        }
+      }
+
+      function planTotals(planChoices) {
+        return planChoices.reduce((totals, optionIndex, mealIndex) => {
+          const option = data.meals[mealIndex].options[optionIndex];
+          totals.calories += Number(option.calorific || 0);
+          totals.protein += Number(option.protein || 0);
+          totals.fiber += Number(option.fiber || 0);
+          return totals;
+        }, { calories: 0, protein: 0, fiber: 0 });
+      }
+
+      function compatiblePlans(excludingMealIndex = null) {
+        return data.feasiblePlans.filter((plan) => lockedSelections.every((choice, idx) => {
+          if (choice === null) {
+            return true;
+          }
+          if (excludingMealIndex !== null && idx === excludingMealIndex) {
+            return true;
+          }
+          return plan[idx] === choice;
+        }));
+      }
+
+      function rankedOptionsForMeal(mealIndex) {
+        const plans = compatiblePlans(mealIndex);
+        const optionMap = new Map();
+        for (const plan of plans) {
+          const optionIndex = plan[mealIndex];
+          const entry = optionMap.get(optionIndex);
+          if (!entry) {
+            optionMap.set(optionIndex, {
+              optionIndex,
+              bestPlan: plan,
+              supportCount: 1,
+            });
+          } else {
+            entry.supportCount += 1;
+          }
+        }
+        const ranked = [...optionMap.values()].sort((left, right) => {
+          if (left.supportCount !== right.supportCount) {
+            return right.supportCount - left.supportCount;
+          }
+          const leftTotals = planTotals(left.bestPlan);
+          const rightTotals = planTotals(right.bestPlan);
+          if (leftTotals.calories !== rightTotals.calories) {
+            return leftTotals.calories - rightTotals.calories;
+          }
+          if (leftTotals.protein !== rightTotals.protein) {
+            return rightTotals.protein - leftTotals.protein;
+          }
+          if (leftTotals.fiber !== rightTotals.fiber) {
+            return rightTotals.fiber - leftTotals.fiber;
+          }
+          return left.optionIndex - right.optionIndex;
+        });
+        return ranked;
+      }
+
+      function bestPlanForCurrentLocks() {
+        const plans = compatiblePlans();
+        return plans.length ? plans[0] : null;
+      }
+
+      function renderSummary() {
+        currentPlan = bestPlanForCurrentLocks();
+        if (!currentPlan) {
+          setError("Current locked choices do not have any valid full-day completion.");
+          return;
+        }
+        dateInput.value = data.date;
+        proteinTargetInput.value = formatNumber(data.requestedTargets.protein);
+        fiberTargetInput.value = formatNumber(data.requestedTargets.fiber);
+        const totals = planTotals(currentPlan);
+        const selectedCount = lockedSelections.filter((value) => value !== null).length;
+        const metrics = [
+          {
+            label: "Calories",
+            value: `${formatNumber(totals.calories)} kcal`,
+            subtle: "Projected best full day",
+          },
+          {
+            label: "Protein",
+            value: `${formatNumber(totals.protein)} g`,
+            subtle: `Target: ${formatNumber(data.effectiveTargets.protein)} g`,
+          },
+          {
+            label: "Fiber",
+            value: `${formatNumber(totals.fiber)} g`,
+            subtle: `Target: ${formatNumber(data.effectiveTargets.fiber)} g`,
+          },
+          {
+            label: "Target status",
+            value:
+              totals.protein + 1e-9 >= data.effectiveTargets.protein &&
+              totals.fiber + 1e-9 >= data.effectiveTargets.fiber
+                ? "Met"
+                : "Not met",
+            subtle: `${selectedCount} meal${selectedCount === 1 ? "" : "s"} selected by you`,
+          },
+        ];
+
+        summaryGrid.innerHTML = metrics.map((metric) => `
+          <div class="metric">
+            <div class="metric-label">${metric.label}</div>
+            <div class="metric-value">${metric.value}</div>
+            <div class="metric-subtle">${metric.subtle}</div>
+          </div>
+        `).join("");
+
+        planCountLabel.textContent = `${data.date} · ${data.feasiblePlans.length} valid plan${data.feasiblePlans.length === 1 ? "" : "s"}`;
+        updateDateLinks();
+        updateSaveUI();
+        syncHeroSpacer();
+      }
+
+      function buildMeals() {
+        mealsRoot.innerHTML = "";
+        data.meals.forEach((meal, mealIndex) => {
+          const section = document.createElement("section");
+          section.className = "meal-section";
+          const rankedOptions = rankedOptionsForMeal(mealIndex);
+          const selectedOptionIndex = currentPlan[mealIndex];
+          const displayEntries = rankedOptions.slice(0, MAX_OPTIONS_PER_MEAL);
+          const userSelectedOptionIndex = lockedSelections[mealIndex];
+          if (
+            userSelectedOptionIndex !== null
+            && !displayEntries.some((entry) => entry.optionIndex === userSelectedOptionIndex)
+          ) {
+            const selectedEntry = rankedOptions.find((entry) => entry.optionIndex === userSelectedOptionIndex);
+            if (selectedEntry) {
+              displayEntries.push(selectedEntry);
+            }
+          }
+
+          section.innerHTML = `
+            <div class="meal-header">
+              <div>
+                <h2>${meal.label}</h2>
+                <p>${rankedOptions.length} viable option${rankedOptions.length === 1 ? "" : "s"} given the current selected meals</p>
+              </div>
+            </div>
+            <div class="options"></div>
+          `;
+
+          const optionsRoot = section.querySelector(".options");
+          if (displayEntries.length === 1) {
+            optionsRoot.classList.add("single-option");
+          }
+          displayEntries.forEach((entry) => {
+            const optionIndex = entry.optionIndex;
+            const option = meal.options[optionIndex];
+            const card = document.createElement("article");
+            card.className = "option-card";
+            const projectedTotals = planTotals(entry.bestPlan);
+            const isUserSelected = userSelectedOptionIndex === optionIndex;
+            const isRecommended = selectedOptionIndex === optionIndex;
+            if (isRecommended) {
+              card.classList.add("selected");
+            }
+            if (isUserSelected) {
+              card.classList.add("user-selected");
+            }
+            const imageMarkup = option.imageUrl
+              ? `<img class="option-image" src="${option.imageUrl}" alt="${option.name}">`
+              : `<div class="option-placeholder">No photo</div>`;
+
+            card.innerHTML = `
+              ${imageMarkup}
+              <div class="option-body">
+                <div class="option-name">${option.name}</div>
+                <div class="macro-row">
+                  <span class="pill">${formatNumber(option.calorific)} kcal</span>
+                  <span class="pill">${formatNumber(option.protein)} g protein</span>
+                  <span class="pill">${formatNumber(option.fiber)} g fiber</span>
+                </div>
+                <div class="macro-row">
+                  <span class="pill">Best day: ${formatNumber(projectedTotals.calories)} kcal</span>
+                  <span class="pill">P ${formatNumber(projectedTotals.protein)} g</span>
+                  <span class="pill">F ${formatNumber(projectedTotals.fiber)} g</span>
+                </div>
+                <div class="card-actions">
+                  <div class="selection-status">
+                    ${isUserSelected ? "Your choice" : isRecommended ? "Recommended" : "Pick this"}
+                    ${entry.supportCount > 1 ? ` · ${entry.supportCount} matching completions` : ""}
+                  </div>
+                </div>
+              </div>
+            `;
+
+            card.addEventListener("click", () => {
+              if (isSaving) {
+                return;
+              }
+              lockedSelections[mealIndex] = isUserSelected ? null : optionIndex;
+              setError("");
+              render();
+            });
+            optionsRoot.appendChild(card);
+          });
+
+          mealsRoot.appendChild(section);
+        });
+      }
+
+      function render() {
+        const bestPlan = bestPlanForCurrentLocks();
+        if (!bestPlan) {
+          setError("Current locked choices do not have any valid full-day completion.");
+          syncHeroSpacer();
+          return;
+        }
+        setError("");
+        currentPlan = bestPlan;
+        renderSummary();
+        buildMeals();
+      }
+
+      async function saveCurrentPlan() {
+        if (!currentPlan || isSaving) {
+          return;
+        }
+        isSaving = true;
+        updateSaveUI();
+        try {
+          const response = await fetch("/api/save", {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+            },
+            body: JSON.stringify({
+              date: data.date,
+              protein_target: data.requestedTargets.protein,
+              fiber_target: data.requestedTargets.fiber,
+              selections: currentPlan,
+            }),
+          });
+          const responsePayload = await response.json();
+          if (!response.ok) {
+            throw new Error(responsePayload.error || "Failed to save selection.");
+          }
+          data = responsePayload.chooser;
+          savedSelections = data.savedSelections.slice();
+          lockedSelections = currentPlan.slice();
+          isSaving = false;
+          setError("");
+          render();
+        } catch (error) {
+          isSaving = false;
+          setError(error.message || "Failed to save selection.");
+          updateSaveUI();
+        }
+      }
+
+      window.addEventListener("beforeunload", (event) => {
+        if (!hasUnsavedChanges() || allowImmediateNavigation || isSaving) {
+          return;
+        }
+        event.preventDefault();
+        event.returnValue = "";
+      });
+
+      function confirmLeaveIfNeeded() {
+        if (isSaving) {
+          return false;
+        }
+        if (!hasUnsavedChanges()) {
+          allowImmediateNavigation = true;
+          return true;
+        }
+        const confirmed = window.confirm("You have unsaved changes. Leave without saving?");
+        if (confirmed) {
+          allowImmediateNavigation = true;
+        }
+        return confirmed;
+      }
+
+      function navigateToDate(dateValue) {
+        if (!dateValue) {
+          return;
+        }
+        if (!confirmLeaveIfNeeded()) {
+          return;
+        }
+        window.location.assign(buildNavigationUrl(dateValue));
+      }
+
+      prevDateButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        navigateToDate(prevDateButton.dataset.targetDate);
+      });
+      nextDateButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        navigateToDate(nextDateButton.dataset.targetDate);
+      });
+      goDateButton.addEventListener("click", (event) => {
+        event.preventDefault();
+        event.stopPropagation();
+        navigateToDate(dateInput.value);
+      });
+
+      proteinTargetInput.addEventListener("change", recomputeChooser);
+      fiberTargetInput.addEventListener("change", recomputeChooser);
+      proteinTargetInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          recomputeChooser();
+        }
+      });
+      fiberTargetInput.addEventListener("keydown", (event) => {
+        if (event.key === "Enter") {
+          event.preventDefault();
+          recomputeChooser();
+        }
+      });
+      saveButton.addEventListener("click", saveCurrentPlan);
+      clearSelectionsButton.addEventListener("click", () => {
+        if (isSaving) {
+          return;
+        }
+        lockedSelections = new Array(data.meals.length).fill(null);
+        setError("");
+        render();
+      });
+      window.addEventListener("resize", syncHeroSpacer);
+
+      render();
+    }
+  </script>
+</body>
+</html>
