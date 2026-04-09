@@ -164,8 +164,18 @@ def load_env_file(path: str = ".env") -> Dict[str, str]:
 
 
 def credentials_from_env(env_vars: Dict[str, str]) -> tuple[Optional[str], Optional[str]]:
-    username = env_vars.get("USER_NAME") or env_vars.get("NTFY_USER_NAME")
-    password = env_vars.get("PASSWORD") or env_vars.get("NTFY_PASSWORD")
+    username = (
+        os.getenv("USER_NAME")
+        or os.getenv("NTFY_USER_NAME")
+        or env_vars.get("USER_NAME")
+        or env_vars.get("NTFY_USER_NAME")
+    )
+    password = (
+        os.getenv("PASSWORD")
+        or os.getenv("NTFY_PASSWORD")
+        or env_vars.get("PASSWORD")
+        or env_vars.get("NTFY_PASSWORD")
+    )
     return username, password
 
 
