@@ -397,22 +397,33 @@
         padding: 14px;
       }
 
+      .hero {
+        margin-bottom: 16px;
+      }
+
+      #heroSpacer {
+        display: none;
+      }
+
       .hero-card.sticky-main-bar {
-        top: calc(8px + env(safe-area-inset-top, 0px));
-        width: calc(100% - 28px);
-        padding: 14px;
+        position: static;
+        top: auto;
+        left: auto;
+        transform: none;
+        width: 100%;
+        padding: 10px;
         border-radius: 16px;
       }
 
       .toolbar {
-        gap: 12px;
-        margin-top: 12px;
+        gap: 8px;
+        margin-top: 8px;
       }
 
       .toolbar-main,
       .toolbar-left {
         display: grid;
-        gap: 10px;
+        gap: 8px;
       }
 
       .toolbar-left,
@@ -423,7 +434,32 @@
       }
 
       .toolbar-state {
-        justify-content: flex-start;
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        align-items: center;
+        justify-content: stretch;
+      }
+
+      .toolbar-label {
+        display: none;
+      }
+
+      .top-links .jump-button,
+      .mobile-controls-toggle,
+      .save-status {
+        min-height: 36px;
+        padding: 6px 10px;
+        font-size: 0.82rem;
+      }
+
+      #planCountLabel {
+        grid-column: 1 / -1;
+        min-height: 0;
+        padding: 0;
+        border: 0;
+        border-radius: 0;
+        background: transparent;
+        font-size: 0.78rem;
       }
 
       .date-form {
@@ -470,16 +506,21 @@
 
       .summary-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 10px;
-        margin-top: 12px;
+        gap: 8px;
+        margin-top: 8px;
       }
 
       .metric {
-        padding: 10px 12px;
+        padding: 8px 10px;
+      }
+
+      .metric-label,
+      .metric-subtle {
+        font-size: 0.8rem;
       }
 
       .metric-value {
-        font-size: 1.12rem;
+        font-size: 1rem;
       }
 
       .meals {
@@ -514,6 +555,10 @@
       .target-controls,
       .toolbar-actions,
       .summary-grid {
+        grid-template-columns: 1fr;
+      }
+
+      .date-form {
         grid-template-columns: 1fr;
       }
     }
@@ -614,6 +659,10 @@
     }
 
     function syncHeroSpacer() {
+      if (mobileMediaQuery.matches) {
+        heroSpacer.style.height = "0px";
+        return;
+      }
       heroSpacer.style.height = `${heroCard.getBoundingClientRect().height + 12}px`;
     }
 
@@ -698,14 +747,16 @@
         proteinTargetInput.disabled = isSaving;
         fiberTargetInput.disabled = isSaving;
         if (isSaving) {
-          saveStatus.textContent = "Saving...";
+          saveStatus.textContent = mobileMediaQuery.matches ? "Saving" : "Saving...";
           return;
         }
         if (!isEditing) {
-          saveStatus.textContent = "Showing saved meals";
+          saveStatus.textContent = mobileMediaQuery.matches ? "Saved" : "Showing saved meals";
           return;
         }
-        saveStatus.textContent = dirty ? "Unsaved changes" : "Editing";
+        saveStatus.textContent = dirty
+          ? (mobileMediaQuery.matches ? "Unsaved" : "Unsaved changes")
+          : "Editing";
       }
 
       async function recomputeChooser() {
@@ -852,8 +903,10 @@
         `).join("");
 
         planCountLabel.textContent = isEditing
-          ? `${data.date} · ${data.feasiblePlans.length} valid plan${data.feasiblePlans.length === 1 ? "" : "s"}`
-          : `${data.date} · saved plan`;
+          ? (mobileMediaQuery.matches
+            ? `${data.feasiblePlans.length} plan${data.feasiblePlans.length === 1 ? "" : "s"}`
+            : `${data.date} · ${data.feasiblePlans.length} valid plan${data.feasiblePlans.length === 1 ? "" : "s"}`)
+          : (mobileMediaQuery.matches ? data.date : `${data.date} · saved plan`);
         updateDateLinks();
         updateSaveUI();
         syncControlsPanel();
