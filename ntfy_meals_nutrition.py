@@ -11,6 +11,13 @@ Authentication:
   Provide cookie string via:
   - --cookies argument, OR
   - NTFY_COOKIES environment variable
+
+Config:
+  Optional config file (default: config.json):
+  {
+    "protein_cap_g": 150,
+    "fiber_cap_g": 40
+  }
 """
 
 from __future__ import annotations
@@ -44,11 +51,39 @@ def parse_args() -> argparse.Namespace:
     parser.add_argument("--date", required=True, help="Date in format YYYY-MM-DD (e.g. 2026-04-11)")
     parser.add_argument("--diet-name", default="Slex", help="Diet display name prefix, default: Slex")
     parser.add_argument(
+        "--config",
+        default="config.json",
+        help="Path to JSON config file with protein_cap_g and fiber_cap_g.",
+    )
+    parser.add_argument(
+        "--optimal-plan",
+        action="store_true",
+        help=(
+            "Compute optimal day plan (one option per meal) using dynamic programming with priorities: "
+            "1) maximize protein up to 150g, 2) maximize fiber up to 40g, 3) minimize calories."
+        ),
+    )
+    parser.add_argument(
         "--cookies",
         default=None,
         help="Raw cookie header string. If omitted, NTFY_COOKIES env var is used.",
     )
     return parser.parse_args()
+
+
+def load_json_config(path: str) -> dict:
+    if not path or not os.path.exists(path):
+        return {}
+    with open(path, "r", encoding="utf-8") as cfg_file:
+        return json.load(cfg_file)
+
+
+def read_caps_from_config(config_data: dict) -> tuple[float, float]:
+    protein_cap = float(config_data.get("protein_cap_g", 150))
+    fiber_cap = float(config_data.get("fiber_cap_g", 40))
+    if protein_cap <= 0 or fiber_cap <= 0:
+        raise ValueError("protein_cap_g and fiber_cap_g must be positive numbers.")
+    return protein_cap, fiber_cap
 
 
 def load_env_file(path: str = ".env") -> Dict[str, str]:
@@ -173,6 +208,85 @@ def markdown_table(title: str, rows: List[dict]) -> str:
     return "\n".join(lines)
 
 
+def compute_optimal_plan(
+    rows_by_meal: Dict[str, List[dict]],
+    protein_cap_g: float,
+    fiber_cap_g: float,
+) -> dict:
+    """
+    Dynamic programming:
+    - choose exactly one option from each meal group
+    - objective (lexicographic):
+      1) maximize total protein capped at configured cap
+      2) maximize total fiber capped at configured cap
+      3) minimize total calories
+    """
+    scale = 10
+    protein_cap = int(round(protein_cap_g * scale))
+    fiber_cap = int(round(fiber_cap_g * scale))
+
+    meal_groups = [(meal, rows) for meal, rows in rows_by_meal.items() if rows]
+    if not meal_groups:
+        raise ValueError("No meal groups available to build an optimal plan.")
+
+    # state[(protein_capped, fiber_capped)] = {"cal": int, "choices": List[dict], "p_raw": int, "f_raw": int}
+    states = {(0, 0): {"cal": 0, "choices": [], "p_raw": 0, "f_raw": 0}}
+
+    for meal_label, options in meal_groups:
+        next_states = {}
+        for (p_cap, f_cap), state in states.items():
+            for option in options:
+                if option.get("calorific") is None or option.get("protein") is None or option.get("fiber") is None:
+                    continue
+
+                p_add = int(round(float(option["protein"]) * scale))
+                f_add = int(round(float(option["fiber"]) * scale))
+                cal_add = int(round(float(option["calorific"]) * scale))
+
+                new_p_raw = state["p_raw"] + p_add
+                new_f_raw = state["f_raw"] + f_add
+                new_cal = state["cal"] + cal_add
+                new_key = (min(protein_cap, p_cap + p_add), min(fiber_cap, f_cap + f_add))
+
+                candidate = {
+                    "cal": new_cal,
+                    "p_raw": new_p_raw,
+                    "f_raw": new_f_raw,
+                    "choices": state["choices"]
+                    + [
+                        {
+                            "meal": meal_label,
+                            "name": option["name"],
+                            "calorific": option["calorific"],
+                            "protein": option["protein"],
+                            "fiber": option["fiber"],
+                        }
+                    ],
+                }
+
+                existing = next_states.get(new_key)
+                if existing is None or candidate["cal"] < existing["cal"]:
+                    next_states[new_key] = candidate
+
+        states = next_states
+        if not states:
+            raise ValueError(f"No valid options for meal group '{meal_label}'.")
+
+    # Pick best terminal state by lexicographic objective.
+    # Max capped protein, then max capped fiber, then min calories.
+    best_key = min(states.keys(), key=lambda k: (-k[0], -k[1], states[k]["cal"]))
+    best_state = states[best_key]
+
+    return {
+        "choices": best_state["choices"],
+        "protein_capped": best_key[0] / scale,
+        "fiber_capped": best_key[1] / scale,
+        "protein_raw": best_state["p_raw"] / scale,
+        "fiber_raw": best_state["f_raw"] / scale,
+        "calories": best_state["cal"] / scale,
+    }
+
+
 def build_rows_by_meal(delivery_payload: dict) -> Dict[str, List[dict]]:
     results = delivery_payload.get("results", [])
     if not results:
@@ -260,6 +374,8 @@ def build_rows_by_meal(delivery_payload: dict) -> Dict[str, List[dict]]:
 def main() -> int:
     args = parse_args()
     validate_date(args.date)
+    config_data = load_json_config(args.config)
+    protein_cap_g, fiber_cap_g = read_caps_from_config(config_data)
 
     env_file_vars = load_env_file(".env")
     cookie_str = args.cookies or os.getenv("NTFY_COOKIES") or env_file_vars.get("NTFY_COOKIES")
@@ -313,6 +429,26 @@ def main() -> int:
     for meal_label, rows in rows_by_meal.items():
         if rows:
             print(markdown_table(meal_label, rows))
+
+    if args.optimal_plan:
+        plan = compute_optimal_plan(rows_by_meal, protein_cap_g=protein_cap_g, fiber_cap_g=fiber_cap_g)
+        print("## Optimal day plan")
+        print("")
+        print("| Meal | Selected option | Calories (kcal) | Protein (g) | Fiber (g) |")
+        print("|---|---|---:|---:|---:|")
+        for choice in plan["choices"]:
+            meal = str(choice["meal"]).replace("|", "\\|")
+            name = str(choice["name"]).replace("|", "\\|")
+            print(
+                f"| {meal} | {name} | {choice['calorific']} | {choice['protein']} | {choice['fiber']} |"
+            )
+        print("")
+        print(
+            "Totals: "
+            f"{plan['calories']} kcal, "
+            f"protein {plan['protein_raw']}g (capped objective: {plan['protein_capped']}g/{protein_cap_g}g), "
+            f"fiber {plan['fiber_raw']}g (capped objective: {plan['fiber_capped']}g/{fiber_cap_g}g)."
+        )
 
     return 0
 
