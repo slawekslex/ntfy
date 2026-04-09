@@ -68,6 +68,14 @@
       flex-wrap: wrap;
     }
 
+    .mobile-only {
+      display: none;
+    }
+
+    .desktop-only {
+      display: inline;
+    }
+
     .button {
       text-decoration: none;
       color: var(--text);
@@ -132,9 +140,126 @@
       white-space: normal;
     }
 
+    .mobile-list {
+      display: none;
+      gap: 12px;
+    }
+
+    .day-card {
+      display: grid;
+      gap: 12px;
+      text-decoration: none;
+      color: inherit;
+      background: rgba(15, 18, 26, 0.85);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px;
+    }
+
+    .day-card.missing-targets {
+      border-color: var(--danger-border);
+      background: rgba(255, 140, 140, 0.1);
+    }
+
+    .day-card-header,
+    .day-card-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: center;
+    }
+
+    .day-card-date {
+      font-weight: 700;
+      font-size: 1rem;
+    }
+
+    .day-card-status {
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--panel-alt);
+      color: var(--muted);
+      font-size: 0.82rem;
+      font-weight: 600;
+      text-align: center;
+    }
+
+    .day-card-status.alert {
+      border-color: var(--danger-border);
+      background: var(--danger-bg);
+      color: #ffd0d0;
+    }
+
+    .day-card-grid {
+      display: grid;
+      grid-template-columns: repeat(2, minmax(0, 1fr));
+      gap: 10px;
+    }
+
+    .day-card-metric {
+      display: grid;
+      gap: 4px;
+      padding: 10px 12px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel-alt);
+    }
+
+    .day-card-label {
+      color: var(--muted);
+      font-size: 0.8rem;
+    }
+
+    .day-card-value {
+      font-size: 0.95rem;
+      font-weight: 600;
+      line-height: 1.3;
+      word-break: break-word;
+    }
+
+    .day-card-error {
+      color: #ffd0d0;
+      line-height: 1.45;
+      font-size: 0.92rem;
+    }
+
     @media (max-width: 720px) {
       .page {
         padding: 14px;
+      }
+
+      .header {
+        align-items: stretch;
+      }
+
+      .nav {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+      }
+
+      .button {
+        text-align: center;
+        padding: 12px 10px;
+      }
+
+      .mobile-only {
+        display: inline;
+      }
+
+      .desktop-only {
+        display: none;
+      }
+
+      .table-wrap {
+        display: none;
+      }
+
+      .mobile-list {
+        display: grid;
       }
     }
   </style>
@@ -148,9 +273,9 @@
           <p class="subtitle">Saved meal totals for the next 3 weeks. Rows highlighted in red do not meet the default targets.</p>
         </div>
         <div class="nav">
-          <a class="button" href="/?start={{ prev_start }}">Previous 3 weeks</a>
-          <a class="button" href="/day?date={{ start_date }}">Open start day</a>
-          <a class="button" href="/?start={{ next_start }}">Next 3 weeks</a>
+          <a class="button" href="/?start={{ prev_start }}"><span class="desktop-only">Previous 3 weeks</span><span class="mobile-only">Prev</span></a>
+          <a class="button" href="/day?date={{ start_date }}"><span class="desktop-only">Open start day</span><span class="mobile-only">Open</span></a>
+          <a class="button" href="/?start={{ next_start }}"><span class="desktop-only">Next 3 weeks</span><span class="mobile-only">Next</span></a>
         </div>
       </div>
 
@@ -189,6 +314,50 @@
             {% endfor %}
           </tbody>
         </table>
+      </div>
+
+      <div class="mobile-list">
+        {% for row in overview_rows %}
+        <a class="day-card {{ '' if row.meets_targets else 'missing-targets' }}" href="/day?date={{ row.date }}">
+          <div class="day-card-header">
+            <div class="day-card-date">{{ row.date }}</div>
+            {% if row.no_diet %}
+            <div class="day-card-status alert">No diet</div>
+            {% elif row.error %}
+            <div class="day-card-status alert">Error</div>
+            {% elif row.meets_targets %}
+            <div class="day-card-status">Targets met</div>
+            {% else %}
+            <div class="day-card-status alert">Below target</div>
+            {% endif %}
+          </div>
+
+          {% if row.no_diet %}
+          <div class="day-card-error">No diet for that day.</div>
+          {% elif row.error %}
+          <div class="day-card-error">{{ row.error }}</div>
+          {% else %}
+          <div class="day-card-grid">
+            <div class="day-card-metric">
+              <div class="day-card-label">Calories</div>
+              <div class="day-card-value">{{ row.calories }}</div>
+            </div>
+            <div class="day-card-metric">
+              <div class="day-card-label">Status</div>
+              <div class="day-card-value">{{ 'Meets targets' if row.meets_targets else 'Below target' }}</div>
+            </div>
+            <div class="day-card-metric">
+              <div class="day-card-label">Protein</div>
+              <div class="day-card-value">{{ row.protein }} / {{ row.protein_target }} g</div>
+            </div>
+            <div class="day-card-metric">
+              <div class="day-card-label">Fiber</div>
+              <div class="day-card-value">{{ row.fiber }} / {{ row.fiber_target }} g</div>
+            </div>
+          </div>
+          {% endif %}
+        </a>
+        {% endfor %}
       </div>
     </section>
   </div>

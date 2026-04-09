@@ -49,10 +49,10 @@
 
     .hero-card.sticky-main-bar {
       position: fixed;
-      top: 12px;
+      top: calc(12px + env(safe-area-inset-top, 0px));
       left: 50%;
       transform: translateX(-50%);
-      width: min(1380px, calc(100vw - 48px));
+      width: min(1380px, calc(100% - 48px));
       z-index: 40;
       background: rgba(23, 26, 33, 0.96);
     }
@@ -67,21 +67,49 @@
     }
 
     .toolbar {
-      display: flex;
-      flex-wrap: wrap;
-      gap: 10px;
-      align-items: center;
-      justify-content: space-between;
+      display: grid;
+      gap: 14px;
       margin-top: 16px;
     }
 
-    .toolbar-right,
+    .toolbar-main,
+    .toolbar-left,
+    .toolbar-state,
+    .toolbar-actions,
     .date-form,
     .date-nav {
       display: flex;
       flex-wrap: wrap;
       gap: 10px;
       align-items: center;
+    }
+
+    .toolbar-main {
+      justify-content: space-between;
+      gap: 14px;
+    }
+
+    .toolbar-left {
+      flex: 1 1 560px;
+      min-width: 0;
+    }
+
+    .toolbar-state {
+      justify-content: flex-end;
+      gap: 8px;
+    }
+
+    .toolbar-secondary {
+      display: flex;
+      flex-wrap: wrap;
+      gap: 14px;
+      align-items: end;
+      justify-content: space-between;
+      margin-top: 14px;
+    }
+
+    .toolbar-secondary.is-collapsed {
+      display: none;
     }
 
     .nav-button,
@@ -125,6 +153,13 @@
     .save-status {
       color: var(--muted);
       font-size: 0.9rem;
+      display: inline-flex;
+      align-items: center;
+      min-height: 40px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      background: rgba(29, 34, 48, 0.8);
+      border: 1px solid var(--border);
     }
 
     .top-links {
@@ -227,6 +262,7 @@
       display: flex;
       flex-direction: column;
       min-height: 100%;
+      touch-action: manipulation;
     }
 
     .option-card:hover {
@@ -314,12 +350,26 @@
 
     .small-button {
       color: var(--text);
-      background: transparent;
+      background: var(--panel-alt);
       border: 1px solid var(--border);
       border-radius: 999px;
-      padding: 6px 10px;
+      padding: 10px 14px;
       font: inherit;
       cursor: pointer;
+    }
+
+    .small-button,
+    .nav-button,
+    .jump-button {
+      min-height: 44px;
+      display: inline-flex;
+      align-items: center;
+      justify-content: center;
+      white-space: nowrap;
+    }
+
+    .mobile-controls-toggle {
+      display: none;
     }
 
     .small-button:hover {
@@ -348,7 +398,123 @@
       }
 
       .hero-card.sticky-main-bar {
-        width: calc(100vw - 28px);
+        top: calc(8px + env(safe-area-inset-top, 0px));
+        width: calc(100% - 28px);
+        padding: 14px;
+        border-radius: 16px;
+      }
+
+      .toolbar {
+        gap: 12px;
+        margin-top: 12px;
+      }
+
+      .toolbar-main,
+      .toolbar-left {
+        display: grid;
+        gap: 10px;
+      }
+
+      .toolbar-left,
+      .toolbar-state,
+      .date-form,
+      .toolbar-secondary {
+        width: 100%;
+      }
+
+      .toolbar-state {
+        justify-content: flex-start;
+      }
+
+      .date-form {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+      }
+
+      .date-nav {
+        display: grid;
+        grid-template-columns: 44px minmax(0, 1fr) 44px;
+        width: 100%;
+      }
+
+      .date-input {
+        width: 100%;
+        min-width: 0;
+      }
+
+      .target-controls {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        width: 100%;
+      }
+
+      .target-field,
+      .target-input {
+        width: 100%;
+        min-width: 0;
+      }
+
+      .toolbar-actions {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        width: 100%;
+      }
+
+      .toolbar-actions .small-button {
+        width: 100%;
+      }
+
+      .mobile-controls-toggle {
+        display: inline-flex;
+      }
+
+      .summary-grid {
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 10px;
+        margin-top: 12px;
+      }
+
+      .metric {
+        padding: 10px 12px;
+      }
+
+      .metric-value {
+        font-size: 1.12rem;
+      }
+
+      .meals {
+        gap: 16px;
+      }
+
+      .meal-section {
+        padding: 14px;
+        border-radius: 16px;
+      }
+
+      .options,
+      .options.single-option {
+        grid-template-columns: 1fr;
+      }
+
+      .option-body {
+        padding: 12px;
+        gap: 8px;
+      }
+
+      .pill {
+        font-size: 0.82rem;
+      }
+
+      .footer-note {
+        margin-top: 18px;
+      }
+    }
+
+    @media (max-width: 520px) {
+      .target-controls,
+      .toolbar-actions,
+      .summary-grid {
+        grid-template-columns: 1fr;
       }
     }
   </style>
@@ -358,8 +524,9 @@
     <section class="hero">
       <div id="heroSpacer"></div>
       <div class="hero-card sticky-main-bar" id="heroCard">
-          <div class="toolbar">
-            <div class="toolbar-right">
+        <div class="toolbar">
+          <div class="toolbar-main">
+            <div class="toolbar-left">
               <div class="top-links">
                 <a class="jump-button" href="/?start={{ current_date }}">Overview</a>
               </div>
@@ -370,31 +537,39 @@
                   <input class="date-input" id="dateInput" type="date" name="date" value="{{ current_date }}">
                   <button class="nav-button nav-arrow" id="nextDateButton" type="button" aria-label="Next day">&#8594;</button>
                 </div>
-                <div class="target-controls">
-                  <div class="target-field">
-                    <label for="proteinTargetInput">Protein target</label>
-                    <input class="date-input target-input" id="proteinTargetInput" type="number" min="0.1" step="0.1" name="protein_target" value="{{ current_protein_target }}">
-                  </div>
-                  <div class="target-field">
-                    <label for="fiberTargetInput">Fiber target</label>
-                    <input class="date-input target-input" id="fiberTargetInput" type="number" min="0.1" step="0.1" name="fiber_target" value="{{ current_fiber_target }}">
-                  </div>
-                </div>
                 <button class="jump-button" id="goDateButton" type="button">Go</button>
               </div>
-              <button class="small-button" type="button" id="editButton">Edit</button>
-              <button class="small-button" type="button" id="saveButton">Save</button>
-              <button class="small-button" type="button" id="clearSelectionsButton">Unselect all</button>
+            </div>
+            <div class="toolbar-state">
               <span class="save-status" id="saveStatus"></span>
               <span class="save-status" id="planCountLabel"></span>
+              <button class="small-button mobile-controls-toggle" type="button" id="mobileControlsToggle" aria-expanded="false" aria-controls="mobileControlsPanel">Targets &amp; actions</button>
             </div>
           </div>
-          <div class="error-box" id="errorBox" {% if not error_message %}hidden{% endif %}>
-            {% if error_message %}
-            {{ error_message }}
-            {% endif %}
-          </div>
+        </div>
+        <div class="error-box" id="errorBox" {% if not error_message %}hidden{% endif %}>
+          {% if error_message %}
+          {{ error_message }}
+          {% endif %}
+        </div>
         <div class="summary-grid" id="summaryGrid"></div>
+        <div class="toolbar-secondary" id="mobileControlsPanel">
+          <div class="target-controls">
+            <div class="target-field">
+              <label for="proteinTargetInput">Protein target</label>
+              <input class="date-input target-input" id="proteinTargetInput" type="number" min="0.1" step="0.1" name="protein_target" value="{{ current_protein_target }}">
+            </div>
+            <div class="target-field">
+              <label for="fiberTargetInput">Fiber target</label>
+              <input class="date-input target-input" id="fiberTargetInput" type="number" min="0.1" step="0.1" name="fiber_target" value="{{ current_fiber_target }}">
+            </div>
+          </div>
+          <div class="toolbar-actions">
+            <button class="small-button" type="button" id="editButton">Edit</button>
+            <button class="small-button" type="button" id="saveButton">Save</button>
+            <button class="small-button" type="button" id="clearSelectionsButton">Unselect all</button>
+          </div>
+        </div>
       </div>
     </section>
     <section class="meals" id="mealsRoot"></section>
@@ -422,6 +597,10 @@
     const saveButton = document.getElementById("saveButton");
     const clearSelectionsButton = document.getElementById("clearSelectionsButton");
     const saveStatus = document.getElementById("saveStatus");
+    const mobileControlsPanel = document.getElementById("mobileControlsPanel");
+    const mobileControlsToggle = document.getElementById("mobileControlsToggle");
+    const mobileMediaQuery = window.matchMedia("(max-width: 720px)");
+    let mobileControlsOpen = false;
 
     function formatNumber(value) {
       return Number(value).toFixed(1).replace(/\.0$/, "");
@@ -436,6 +615,15 @@
 
     function syncHeroSpacer() {
       heroSpacer.style.height = `${heroCard.getBoundingClientRect().height + 12}px`;
+    }
+
+    function syncControlsPanel() {
+      const shouldOpen = !mobileMediaQuery.matches || mobileControlsOpen;
+      mobileControlsPanel.classList.toggle("is-collapsed", !shouldOpen);
+      mobileControlsToggle.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
+      mobileControlsToggle.textContent = shouldOpen && mobileMediaQuery.matches
+        ? "Hide controls"
+        : "Targets & actions";
     }
 
     function updateDateLinks() {
@@ -473,6 +661,7 @@
     if (!data) {
       planCountLabel.textContent = "";
       summaryGrid.innerHTML = "";
+      syncControlsPanel();
       updateDateLinks();
       syncHeroSpacer();
     } else {
@@ -494,6 +683,9 @@
 
       function updateSaveUI() {
         const dirty = hasUnsavedChanges();
+        if (mobileMediaQuery.matches && (isEditing || isSaving)) {
+          mobileControlsOpen = true;
+        }
         editButton.disabled = isSaving || isEditing;
         saveButton.disabled = isSaving || !isEditing || currentPlan === null || !dirty;
         saveButton.style.opacity = saveButton.disabled ? "0.6" : "1";
@@ -501,6 +693,7 @@
         nextDateButton.disabled = isSaving;
         goDateButton.disabled = isSaving;
         clearSelectionsButton.disabled = isSaving || !isEditing;
+        mobileControlsToggle.disabled = isSaving;
         dateInput.disabled = isSaving;
         proteinTargetInput.disabled = isSaving;
         fiberTargetInput.disabled = isSaving;
@@ -537,6 +730,7 @@
           lockedSelections = new Array(data.meals.length).fill(null);
           savedSelections = data.savedSelections.slice();
           isEditing = false;
+          mobileControlsOpen = false;
           history.replaceState(null, "", `/day?${query.toString()}`);
           updateDateLinks();
           setError("");
@@ -624,17 +818,17 @@
           {
             label: "Calories",
             value: `${formatNumber(totals.calories)} kcal`,
-            subtle: isEditing ? "Projected best full day" : "Currently saved full day",
+            subtle: isEditing ? "Best full day" : "Saved day",
           },
           {
             label: "Protein",
             value: `${formatNumber(totals.protein)} g`,
-            subtle: `Target: ${formatNumber(data.effectiveTargets.protein)} g`,
+            subtle: `Goal ${formatNumber(data.effectiveTargets.protein)} g`,
           },
           {
             label: "Fiber",
             value: `${formatNumber(totals.fiber)} g`,
-            subtle: `Target: ${formatNumber(data.effectiveTargets.fiber)} g`,
+            subtle: `Goal ${formatNumber(data.effectiveTargets.fiber)} g`,
           },
           {
             label: "Target status",
@@ -644,8 +838,8 @@
                 ? "Met"
                 : "Not met",
             subtle: isEditing
-              ? `${selectedCount} meal${selectedCount === 1 ? "" : "s"} selected by you`
-              : "Saved selections from server",
+              ? `${selectedCount} meal${selectedCount === 1 ? "" : "s"} locked`
+              : "Saved on server",
           },
         ];
 
@@ -662,6 +856,7 @@
           : `${data.date} · saved plan`;
         updateDateLinks();
         updateSaveUI();
+        syncControlsPanel();
         syncHeroSpacer();
       }
 
@@ -828,6 +1023,7 @@
           lockedSelections = new Array(data.meals.length).fill(null);
           isEditing = false;
           isSaving = false;
+          mobileControlsOpen = false;
           setError("");
           render();
         } catch (error) {
@@ -905,6 +1101,7 @@
           return;
         }
         isEditing = true;
+        mobileControlsOpen = true;
         lockedSelections = new Array(data.meals.length).fill(null);
         setError("");
         render();
@@ -917,6 +1114,18 @@
         lockedSelections = new Array(data.meals.length).fill(null);
         setError("");
         render();
+      });
+      mobileControlsToggle.addEventListener("click", () => {
+        mobileControlsOpen = !mobileControlsOpen;
+        syncControlsPanel();
+        syncHeroSpacer();
+      });
+      mobileMediaQuery.addEventListener("change", () => {
+        if (!mobileMediaQuery.matches) {
+          mobileControlsOpen = false;
+        }
+        syncControlsPanel();
+        syncHeroSpacer();
       });
       window.addEventListener("resize", syncHeroSpacer);
 
