@@ -268,7 +268,6 @@ def send_ntfy_request(
 ) -> requests.Response:
     url = f"{ORION_BASE}/{path.lstrip('/')}"
     session = requests.Session()
-    session.trust_env = False
     headers = {
         "Api-Language": "pl",
         "Trace-Id": str(uuid.uuid4()),
