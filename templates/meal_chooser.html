@@ -344,6 +344,13 @@
       height: 100%;
     }
 
+    .option-top {
+      display: flex;
+      justify-content: space-between;
+      align-items: flex-start;
+      gap: 10px;
+    }
+
     .option-name {
       font-size: 1rem;
       line-height: 1.35;
@@ -371,6 +378,38 @@
       color: var(--accent-2);
       font-size: 0.9rem;
       font-weight: 600;
+      display: inline-flex;
+      align-items: center;
+      padding: 4px 8px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(29, 34, 48, 0.72);
+      white-space: nowrap;
+    }
+
+    .selection-status.recommended {
+      color: #bfd1ff;
+      border-color: rgba(122, 162, 255, 0.35);
+    }
+
+    .selection-status.user {
+      color: var(--accent-2);
+      border-color: rgba(142, 240, 198, 0.35);
+    }
+
+    .selection-status.saved {
+      color: var(--accent-2);
+      border-color: rgba(142, 240, 198, 0.35);
+    }
+
+    .selection-status.pick {
+      color: var(--muted);
+    }
+
+    .option-note {
+      color: var(--muted);
+      font-size: 0.84rem;
+      line-height: 1.35;
     }
 
     .card-actions {
@@ -427,11 +466,11 @@
 
     @media (max-width: 720px) {
       .page {
-        padding: 14px;
+        padding: 10px;
       }
 
       .hero {
-        margin-bottom: 16px;
+        margin-bottom: 12px;
       }
 
       #heroSpacer {
@@ -444,33 +483,40 @@
         left: auto;
         transform: none;
         width: 100%;
-        padding: 10px;
-        border-radius: 16px;
+        padding: 8px;
+        border-radius: 14px;
       }
 
       .toolbar {
-        gap: 8px;
-        margin-top: 8px;
+        gap: 6px;
+        margin-top: 0;
       }
 
-      .toolbar-main,
+      .toolbar-main {
+        display: grid;
+        grid-template-columns: minmax(0, 1fr) auto;
+        gap: 8px;
+        align-items: center;
+      }
+
       .toolbar-left {
         display: grid;
+        grid-template-columns: auto minmax(0, 1fr);
         gap: 8px;
+        align-items: center;
+        min-width: 0;
       }
 
-      .toolbar-left,
-      .toolbar-state,
-      .date-form,
       .toolbar-secondary {
         width: 100%;
       }
 
       .toolbar-state {
         display: grid;
-        grid-template-columns: auto auto auto;
+        grid-template-columns: auto auto;
         align-items: center;
-        justify-content: space-between;
+        justify-content: end;
+        gap: 8px;
       }
 
       .toolbar-label {
@@ -480,9 +526,9 @@
       .top-links .jump-button,
       .mobile-controls-toggle,
       .save-status {
-        min-height: 36px;
-        padding: 6px 8px;
-        font-size: 0.82rem;
+        min-height: 34px;
+        padding: 6px;
+        font-size: 0.8rem;
       }
 
       #planCountLabel {
@@ -501,8 +547,8 @@
       .mobile-controls-toggle,
       .toolbar-actions .small-button,
       #goDateButton {
-        min-width: 36px;
-        width: 36px;
+        min-width: 34px;
+        width: 34px;
         padding-left: 0;
         padding-right: 0;
       }
@@ -521,9 +567,17 @@
         justify-self: center;
       }
 
+      .top-links {
+        gap: 0;
+      }
+
       .date-form {
-        display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
+        display: block;
+        width: 100%;
+      }
+
+      #goDateButton {
+        display: none;
       }
 
       .date-nav {
@@ -535,6 +589,9 @@
       .date-input {
         width: 100%;
         min-width: 0;
+        min-height: 40px;
+        padding: 8px 10px;
+        text-align: center;
       }
 
       .target-controls {
@@ -574,30 +631,50 @@
 
       .summary-grid {
         grid-template-columns: repeat(2, minmax(0, 1fr));
-        gap: 8px;
-        margin-top: 8px;
+        gap: 6px;
+        margin-top: 4px;
       }
 
       .metric {
-        padding: 8px 10px;
+        min-height: 0;
+        padding: 8px;
+        border-radius: 12px;
       }
 
-      .metric-label,
-      .metric-subtle {
-        font-size: 0.8rem;
+      .metric-label {
+        margin-bottom: 4px;
+        font-size: 0.72rem;
+        text-transform: uppercase;
+        letter-spacing: 0.04em;
       }
 
       .metric-value {
-        font-size: 1rem;
+        font-size: 0.98rem;
+      }
+
+      .metric-subtle {
+        display: none;
       }
 
       .meals {
-        gap: 16px;
+        gap: 12px;
       }
 
       .meal-section {
-        padding: 14px;
+        padding: 12px;
         border-radius: 16px;
+      }
+
+      .meal-header {
+        margin-bottom: 10px;
+      }
+
+      .meal-header h2 {
+        font-size: 1.35rem;
+      }
+
+      .meal-header p {
+        font-size: 0.84rem;
       }
 
       .options,
@@ -606,27 +683,45 @@
       }
 
       .option-body {
-        padding: 12px;
+        padding: 10px;
+        gap: 6px;
+      }
+
+      .option-image,
+      .option-placeholder {
+        aspect-ratio: 16 / 10;
+      }
+
+      .option-name {
+        font-size: 0.96rem;
+      }
+
+      .option-top {
         gap: 8px;
       }
 
       .pill {
-        font-size: 0.82rem;
+        padding: 4px 8px;
+        font-size: 0.76rem;
+      }
+
+      .selection-status {
+        padding: 3px 7px;
+        font-size: 0.74rem;
+      }
+
+      .option-note {
+        font-size: 0.76rem;
       }
 
       .footer-note {
-        margin-top: 18px;
+        margin-top: 14px;
       }
     }
 
     @media (max-width: 520px) {
       .target-controls,
-      .toolbar-actions,
-      .summary-grid {
-        grid-template-columns: 1fr;
-      }
-
-      .date-form {
+      .toolbar-actions {
         grid-template-columns: 1fr;
       }
     }
@@ -964,29 +1059,34 @@
         fiberTargetInput.value = formatNumber(data.requestedTargets.fiber);
         const totals = planTotals(currentPlan);
         const selectedCount = lockedSelections.filter((value) => value !== null).length;
+        const targetsMet =
+          totals.protein + 1e-9 >= data.effectiveTargets.protein
+          && totals.fiber + 1e-9 >= data.effectiveTargets.fiber;
         const metrics = [
           {
             label: "Calories",
-            value: `${formatNumber(totals.calories)} kcal`,
+            value: mobileMediaQuery.matches
+              ? `${formatNumber(totals.calories)}`
+              : `${formatNumber(totals.calories)} kcal`,
             subtle: isEditing ? "Best full day" : "Saved day",
           },
           {
-            label: "Protein",
-            value: `${formatNumber(totals.protein)} g`,
+            label: mobileMediaQuery.matches ? "P" : "Protein",
+            value: mobileMediaQuery.matches
+              ? `${formatNumber(totals.protein)}/${formatNumber(data.effectiveTargets.protein)}`
+              : `${formatNumber(totals.protein)} g`,
             subtle: `Goal ${formatNumber(data.effectiveTargets.protein)} g`,
           },
           {
-            label: "Fiber",
-            value: `${formatNumber(totals.fiber)} g`,
+            label: mobileMediaQuery.matches ? "F" : "Fiber",
+            value: mobileMediaQuery.matches
+              ? `${formatNumber(totals.fiber)}/${formatNumber(data.effectiveTargets.fiber)}`
+              : `${formatNumber(totals.fiber)} g`,
             subtle: `Goal ${formatNumber(data.effectiveTargets.fiber)} g`,
           },
           {
-            label: "Target status",
-            value:
-              totals.protein + 1e-9 >= data.effectiveTargets.protein &&
-              totals.fiber + 1e-9 >= data.effectiveTargets.fiber
-                ? "Met"
-                : "Not met",
+            label: mobileMediaQuery.matches ? "Status" : "Target status",
+            value: targetsMet ? "OK" : "Low",
             subtle: isEditing
               ? `${selectedCount} meal${selectedCount === 1 ? "" : "s"} locked`
               : "Saved on server",
@@ -1027,22 +1127,23 @@
               <div class="meal-header">
                 <div>
                   <h2>${meal.label}</h2>
-                  <p>Currently saved on the server</p>
+                  <p>${mobileMediaQuery.matches ? "Saved" : "Currently saved on the server"}</p>
                 </div>
               </div>
               <div class="options single-option">
                 <article class="option-card selected user-selected">
                   ${imageMarkup}
                   <div class="option-body">
-                    <div class="option-name">${option.name}</div>
+                    <div class="option-top">
+                      <div class="option-name">${option.name}</div>
+                      <div class="selection-status saved">Saved</div>
+                    </div>
                     <div class="macro-row">
                       <span class="pill">${formatNumber(option.calorific)} kcal</span>
-                      <span class="pill">${formatNumber(option.protein)} g protein</span>
-                      <span class="pill">${formatNumber(option.fiber)} g fiber</span>
+                      <span class="pill">P ${formatNumber(option.protein)} g</span>
+                      <span class="pill">F ${formatNumber(option.fiber)} g</span>
                     </div>
-                    <div class="card-actions">
-                      <div class="selection-status">Saved on server</div>
-                    </div>
+                    <div class="option-note">${mobileMediaQuery.matches ? "Current saved meal" : "Saved on server"}</div>
                   </div>
                 </article>
               </div>
@@ -1068,7 +1169,9 @@
             <div class="meal-header">
               <div>
                 <h2>${meal.label}</h2>
-                <p>${rankedOptions.length} viable option${rankedOptions.length === 1 ? "" : "s"} given the current selected meals</p>
+                <p>${mobileMediaQuery.matches
+                  ? `${rankedOptions.length} option${rankedOptions.length === 1 ? "" : "s"}`
+                  : `${rankedOptions.length} viable option${rankedOptions.length === 1 ? "" : "s"} given the current selected meals`}</p>
               </div>
             </div>
             <div class="options"></div>
@@ -1086,6 +1189,8 @@
             const projectedTotals = planTotals(entry.bestPlan);
             const isUserSelected = userSelectedOptionIndex === optionIndex;
             const isRecommended = selectedOptionIndex === optionIndex;
+            const statusText = isUserSelected ? "Yours" : isRecommended ? "Best" : "Pick";
+            const statusClass = isUserSelected ? "user" : isRecommended ? "recommended" : "pick";
             if (isRecommended) {
               card.classList.add("selected");
             }
@@ -1099,22 +1204,20 @@
             card.innerHTML = `
               ${imageMarkup}
               <div class="option-body">
-                <div class="option-name">${option.name}</div>
+                <div class="option-top">
+                  <div class="option-name">${option.name}</div>
+                  <div class="selection-status ${statusClass}">${statusText}</div>
+                </div>
                 <div class="macro-row">
                   <span class="pill">${formatNumber(option.calorific)} kcal</span>
-                  <span class="pill">${formatNumber(option.protein)} g protein</span>
-                  <span class="pill">${formatNumber(option.fiber)} g fiber</span>
+                  <span class="pill">P ${formatNumber(option.protein)} g</span>
+                  <span class="pill">F ${formatNumber(option.fiber)} g</span>
                 </div>
-                <div class="macro-row">
-                  <span class="pill">Best day: ${formatNumber(projectedTotals.calories)} kcal</span>
-                  <span class="pill">P ${formatNumber(projectedTotals.protein)} g</span>
-                  <span class="pill">F ${formatNumber(projectedTotals.fiber)} g</span>
-                </div>
-                <div class="card-actions">
-                  <div class="selection-status">
-                    ${isUserSelected ? "Your choice" : isRecommended ? "Recommended" : "Pick this"}
-                    ${entry.supportCount > 1 ? ` · ${entry.supportCount} matching completions` : ""}
-                  </div>
+                <div class="option-note">
+                  ${mobileMediaQuery.matches
+                    ? `Day ${formatNumber(projectedTotals.calories)} kcal · P ${formatNumber(projectedTotals.protein)} · F ${formatNumber(projectedTotals.fiber)}`
+                    : `Best day: ${formatNumber(projectedTotals.calories)} kcal · P ${formatNumber(projectedTotals.protein)} g · F ${formatNumber(projectedTotals.fiber)} g`}
+                  ${entry.supportCount > 1 ? `${mobileMediaQuery.matches ? " · " : "<br>"}${entry.supportCount} matching plan${entry.supportCount === 1 ? "" : "s"}` : ""}
                 </div>
               </div>
             `;
@@ -1232,6 +1335,11 @@
         event.preventDefault();
         event.stopPropagation();
         navigateToDate(dateInput.value);
+      });
+      dateInput.addEventListener("change", () => {
+        if (mobileMediaQuery.matches) {
+          navigateToDate(dateInput.value);
+        }
       });
 
       proteinTargetInput.addEventListener("change", recomputeChooser);

@@ -3,12 +3,15 @@
 from __future__ import annotations
 
 import argparse
+import hashlib
 import json
+import os
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
+from urllib.parse import urlparse
 from typing import Dict, Tuple
 
-from flask import Flask, Response, abort, jsonify, render_template, request
+from flask import Flask, Response, abort, jsonify, redirect, render_template, request, session, url_for
 
 from ntfy_meals_lib import (
     DELIVERY_EXPANSIONS,
@@ -20,6 +23,7 @@ from ntfy_meals_lib import (
     fetch_delivery_context,
     fetch_image_bytes,
     load_json_config,
+    load_env_file,
     nutrition_aggregates_by_name,
     read_caps_from_config,
     validate_date,
@@ -47,9 +51,71 @@ def parse_args() -> argparse.Namespace:
 
 def create_app(args: argparse.Namespace) -> Flask:
     app = Flask(__name__)
+    env_vars = load_env_file()
+    auth_password = os.getenv("APP_PASSWORD") or env_vars.get("APP_PASSWORD") or os.getenv("PASSWORD") or env_vars.get("PASSWORD")
+    if not auth_password:
+        raise ValueError("Missing APP_PASSWORD or PASSWORD in .env for app login.")
+    secret_source = os.getenv("FLASK_SECRET_KEY") or env_vars.get("FLASK_SECRET_KEY") or auth_password
+    app.config.update(
+        SECRET_KEY=hashlib.sha256(f"ntfy-auth:{secret_source}".encode("utf-8")).hexdigest(),
+        PERMANENT_SESSION_LIFETIME=timedelta(days=36500),
+        SESSION_COOKIE_HTTPONLY=True,
+        SESSION_COOKIE_SAMESITE="Lax",
+    )
     image_cache: Dict[str, Tuple[bytes, str]] = {}
     chooser_cache: Dict[str, dict] = {}
     context_cache: Dict[str, dict] = {}
+
+    def requested_path() -> str:
+        query = request.query_string.decode("utf-8")
+        return f"{request.path}?{query}" if query else request.path
+
+    def safe_redirect_target(raw_target: str | None) -> str:
+        if not raw_target:
+            return url_for("overview")
+        parsed = urlparse(raw_target)
+        if parsed.scheme or parsed.netloc:
+            return url_for("overview")
+        if not raw_target.startswith("/"):
+            return url_for("overview")
+        return raw_target
+
+    @app.before_request
+    def require_login() -> Response | None:
+        if request.endpoint in {"login", "login_post", "logout", "static"}:
+            return None
+        if session.get("authenticated"):
+            session.permanent = True
+            return None
+        if request.path.startswith("/api/"):
+            return jsonify({"error": "Authentication required."}), 401
+        return redirect(url_for("login", next=requested_path()))
+
+    @app.get("/login")
+    def login() -> str | Response:
+        if session.get("authenticated"):
+            return redirect(safe_redirect_target(request.args.get("next")))
+        return render_template("login.html", error_message=None, next_url=request.args.get("next", ""))
+
+    @app.post("/login")
+    def login_post() -> str | Response:
+        submitted_password = request.form.get("password", "")
+        next_url = request.form.get("next", "")
+        if submitted_password != auth_password:
+            return render_template(
+                "login.html",
+                error_message="Wrong password.",
+                next_url=next_url,
+            ), 401
+        session.clear()
+        session["authenticated"] = True
+        session.permanent = True
+        return redirect(safe_redirect_target(next_url))
+
+    @app.post("/logout")
+    def logout() -> Response:
+        session.clear()
+        return redirect(url_for("login"))
 
     def with_image_urls(chooser_payload: dict) -> dict:
         for meal in chooser_payload["meals"]:
