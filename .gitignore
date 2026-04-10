@@ -1,5 +1,6 @@
 .env
 .venv/
+.data/
 __pycache__/
 .ntfy_cookie_cache.json
 *.pyc
