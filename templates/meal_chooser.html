@@ -123,6 +123,24 @@
       font-weight: 600;
     }
 
+    .button-icon {
+      display: none;
+      line-height: 1;
+      font-size: 1rem;
+    }
+
+    .sr-only {
+      position: absolute;
+      width: 1px;
+      height: 1px;
+      padding: 0;
+      margin: -1px;
+      overflow: hidden;
+      clip: rect(0, 0, 0, 0);
+      white-space: nowrap;
+      border: 0;
+    }
+
     .nav-button:hover,
     .jump-button:hover {
       border-color: rgba(122, 162, 255, 0.6);
@@ -160,6 +178,21 @@
       border-radius: 999px;
       background: rgba(29, 34, 48, 0.8);
       border: 1px solid var(--border);
+    }
+
+    .save-status.is-saved {
+      color: #c4f5dd;
+      border-color: rgba(142, 240, 198, 0.35);
+    }
+
+    .save-status.is-dirty {
+      color: #ffe29a;
+      border-color: rgba(255, 226, 154, 0.35);
+    }
+
+    .save-status.is-saving {
+      color: #bfd1ff;
+      border-color: rgba(122, 162, 255, 0.35);
     }
 
     .top-links {
@@ -435,9 +468,9 @@
 
       .toolbar-state {
         display: grid;
-        grid-template-columns: minmax(0, 1fr) auto;
+        grid-template-columns: auto auto auto;
         align-items: center;
-        justify-content: stretch;
+        justify-content: space-between;
       }
 
       .toolbar-label {
@@ -448,18 +481,44 @@
       .mobile-controls-toggle,
       .save-status {
         min-height: 36px;
-        padding: 6px 10px;
+        padding: 6px 8px;
         font-size: 0.82rem;
       }
 
       #planCountLabel {
-        grid-column: 1 / -1;
-        min-height: 0;
+        display: none;
+      }
+
+      .button-icon {
+        display: inline-flex;
+      }
+
+      .button-text {
+        display: none;
+      }
+
+      .top-links .jump-button,
+      .mobile-controls-toggle,
+      .toolbar-actions .small-button,
+      #goDateButton {
+        min-width: 36px;
+        width: 36px;
+        padding-left: 0;
+        padding-right: 0;
+      }
+
+      .save-status {
+        width: 12px;
+        min-width: 12px;
+        min-height: 12px;
+        height: 12px;
         padding: 0;
-        border: 0;
-        border-radius: 0;
-        background: transparent;
-        font-size: 0.78rem;
+        border-radius: 999px;
+        font-size: 0;
+      }
+
+      #saveStatus {
+        justify-self: center;
       }
 
       .date-form {
@@ -488,6 +547,15 @@
       .target-input {
         width: 100%;
         min-width: 0;
+      }
+
+      .target-field label {
+        display: none;
+      }
+
+      #proteinTargetInput::placeholder,
+      #fiberTargetInput::placeholder {
+        color: var(--muted);
       }
 
       .toolbar-actions {
@@ -573,7 +641,10 @@
           <div class="toolbar-main">
             <div class="toolbar-left">
               <div class="top-links">
-                <a class="jump-button" href="/?start={{ current_date }}">Overview</a>
+                <a class="jump-button" href="/?start={{ current_date }}" aria-label="Overview">
+                  <span class="button-icon" aria-hidden="true">&#8962;</span>
+                  <span class="button-text">Overview</span>
+                </a>
               </div>
               <span class="toolbar-label">{{ diet_name }}</span>
               <div class="date-form">
@@ -582,13 +653,19 @@
                   <input class="date-input" id="dateInput" type="date" name="date" value="{{ current_date }}">
                   <button class="nav-button nav-arrow" id="nextDateButton" type="button" aria-label="Next day">&#8594;</button>
                 </div>
-                <button class="jump-button" id="goDateButton" type="button">Go</button>
+                <button class="jump-button" id="goDateButton" type="button" aria-label="Open selected day">
+                  <span class="button-icon" aria-hidden="true">&#10148;</span>
+                  <span class="button-text">Go</span>
+                </button>
               </div>
             </div>
             <div class="toolbar-state">
               <span class="save-status" id="saveStatus"></span>
               <span class="save-status" id="planCountLabel"></span>
-              <button class="small-button mobile-controls-toggle" type="button" id="mobileControlsToggle" aria-expanded="false" aria-controls="mobileControlsPanel">Targets &amp; actions</button>
+              <button class="small-button mobile-controls-toggle" type="button" id="mobileControlsToggle" aria-expanded="false" aria-controls="mobileControlsPanel" aria-label="Open controls">
+                <span class="button-icon" aria-hidden="true">&#9881;</span>
+                <span class="button-text">Targets &amp; actions</span>
+              </button>
             </div>
           </div>
         </div>
@@ -602,17 +679,26 @@
           <div class="target-controls">
             <div class="target-field">
               <label for="proteinTargetInput">Protein target</label>
-              <input class="date-input target-input" id="proteinTargetInput" type="number" min="0.1" step="0.1" name="protein_target" value="{{ current_protein_target }}">
+              <input class="date-input target-input" id="proteinTargetInput" type="number" min="0.1" step="0.1" name="protein_target" value="{{ current_protein_target }}" placeholder="P" aria-label="Protein target">
             </div>
             <div class="target-field">
               <label for="fiberTargetInput">Fiber target</label>
-              <input class="date-input target-input" id="fiberTargetInput" type="number" min="0.1" step="0.1" name="fiber_target" value="{{ current_fiber_target }}">
+              <input class="date-input target-input" id="fiberTargetInput" type="number" min="0.1" step="0.1" name="fiber_target" value="{{ current_fiber_target }}" placeholder="F" aria-label="Fiber target">
             </div>
           </div>
           <div class="toolbar-actions">
-            <button class="small-button" type="button" id="editButton">Edit</button>
-            <button class="small-button" type="button" id="saveButton">Save</button>
-            <button class="small-button" type="button" id="clearSelectionsButton">Unselect all</button>
+            <button class="small-button" type="button" id="editButton" aria-label="Edit selections">
+              <span class="button-icon" aria-hidden="true">&#9998;</span>
+              <span class="button-text">Edit</span>
+            </button>
+            <button class="small-button" type="button" id="saveButton" aria-label="Save selections">
+              <span class="button-icon" aria-hidden="true">&#10003;</span>
+              <span class="button-text">Save</span>
+            </button>
+            <button class="small-button" type="button" id="clearSelectionsButton" aria-label="Clear selections">
+              <span class="button-icon" aria-hidden="true">&#10005;</span>
+              <span class="button-text">Unselect all</span>
+            </button>
           </div>
         </div>
       </div>
@@ -644,6 +730,7 @@
     const saveStatus = document.getElementById("saveStatus");
     const mobileControlsPanel = document.getElementById("mobileControlsPanel");
     const mobileControlsToggle = document.getElementById("mobileControlsToggle");
+    const mobileControlsToggleText = mobileControlsToggle.querySelector(".button-text");
     const mobileMediaQuery = window.matchMedia("(max-width: 720px)");
     let mobileControlsOpen = false;
 
@@ -670,7 +757,9 @@
       const shouldOpen = !mobileMediaQuery.matches || mobileControlsOpen;
       mobileControlsPanel.classList.toggle("is-collapsed", !shouldOpen);
       mobileControlsToggle.setAttribute("aria-expanded", shouldOpen ? "true" : "false");
-      mobileControlsToggle.textContent = shouldOpen && mobileMediaQuery.matches
+      mobileControlsToggle.setAttribute("aria-label", shouldOpen ? "Hide controls" : "Open controls");
+      mobileControlsToggle.title = shouldOpen ? "Hide controls" : "Open controls";
+      mobileControlsToggleText.textContent = shouldOpen && mobileMediaQuery.matches
         ? "Hide controls"
         : "Targets & actions";
     }
@@ -735,6 +824,7 @@
         if (mobileMediaQuery.matches && (isEditing || isSaving)) {
           mobileControlsOpen = true;
         }
+        saveStatus.classList.remove("is-saved", "is-dirty", "is-saving");
         editButton.disabled = isSaving || isEditing;
         saveButton.disabled = isSaving || !isEditing || currentPlan === null || !dirty;
         saveButton.style.opacity = saveButton.disabled ? "0.6" : "1";
@@ -747,16 +837,25 @@
         proteinTargetInput.disabled = isSaving;
         fiberTargetInput.disabled = isSaving;
         if (isSaving) {
+          saveStatus.classList.add("is-saving");
           saveStatus.textContent = mobileMediaQuery.matches ? "Saving" : "Saving...";
+          saveStatus.title = "Saving";
+          saveStatus.setAttribute("aria-label", "Saving");
           return;
         }
         if (!isEditing) {
+          saveStatus.classList.add("is-saved");
           saveStatus.textContent = mobileMediaQuery.matches ? "Saved" : "Showing saved meals";
+          saveStatus.title = "Saved";
+          saveStatus.setAttribute("aria-label", "Saved");
           return;
         }
+        saveStatus.classList.add(dirty ? "is-dirty" : "is-saved");
         saveStatus.textContent = dirty
           ? (mobileMediaQuery.matches ? "Unsaved" : "Unsaved changes")
           : "Editing";
+        saveStatus.title = dirty ? "Unsaved changes" : "Editing";
+        saveStatus.setAttribute("aria-label", dirty ? "Unsaved changes" : "Editing");
       }
 
       async function recomputeChooser() {
