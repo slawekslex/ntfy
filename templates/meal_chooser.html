@@ -28,6 +28,10 @@
       color: var(--text);
     }
 
+    body.is-loading {
+      cursor: progress;
+    }
+
     .page {
       max-width: 1380px;
       margin: 0 auto;
@@ -464,6 +468,76 @@
       line-height: 1.45;
     }
 
+    .loading-overlay[hidden] {
+      display: none;
+    }
+
+    .loading-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 999;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(13, 16, 22, 0.72);
+      backdrop-filter: blur(8px);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity 140ms ease;
+    }
+
+    .loading-overlay.is-visible {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: all;
+    }
+
+    .loading-panel {
+      width: min(420px, calc(100vw - 32px));
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: rgba(23, 26, 33, 0.96);
+      box-shadow: 0 18px 50px var(--shadow);
+    }
+
+    .loading-title {
+      margin-bottom: 10px;
+      font-weight: 700;
+    }
+
+    .loading-text {
+      margin-bottom: 12px;
+      color: var(--muted);
+    }
+
+    .loading-progress {
+      height: 10px;
+      overflow: hidden;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .loading-progress-bar {
+      width: 42%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #4d77ff, var(--accent), var(--accent-2));
+      animation: loading-slide 1.15s ease-in-out infinite;
+    }
+
+    @keyframes loading-slide {
+      from {
+        transform: translateX(-120%);
+      }
+
+      to {
+        transform: translateX(320%);
+      }
+    }
+
     @media (max-width: 720px) {
       .page {
         padding: 10px;
@@ -803,6 +877,15 @@
       Each meal shows a few best options given the meals you selected so far. Picking one meal recomputes the recommendations for the remaining meals.
     </p>
   </div>
+  <div class="loading-overlay" id="loadingOverlay" hidden aria-live="polite" aria-busy="true">
+    <div class="loading-panel">
+      <div class="loading-title">Loading</div>
+      <div class="loading-text" id="loadingMessage">Opening page...</div>
+      <div class="loading-progress" aria-hidden="true">
+        <div class="loading-progress-bar"></div>
+      </div>
+    </div>
+  </div>
 
   <script>
     let data = {{ page_data_json | safe }};
@@ -827,7 +910,28 @@
     const mobileControlsToggle = document.getElementById("mobileControlsToggle");
     const mobileControlsToggleText = mobileControlsToggle.querySelector(".button-text");
     const mobileMediaQuery = window.matchMedia("(max-width: 720px)");
+    const loadingOverlay = document.getElementById("loadingOverlay");
+    const loadingMessage = document.getElementById("loadingMessage");
     let mobileControlsOpen = false;
+
+    function showLoadingOverlay(message) {
+      loadingMessage.textContent = message;
+      loadingOverlay.hidden = false;
+      document.body.classList.add("is-loading");
+      requestAnimationFrame(() => {
+        loadingOverlay.classList.add("is-visible");
+      });
+    }
+
+    function hideLoadingOverlay() {
+      loadingOverlay.classList.remove("is-visible");
+      document.body.classList.remove("is-loading");
+      window.setTimeout(() => {
+        if (!loadingOverlay.classList.contains("is-visible")) {
+          loadingOverlay.hidden = true;
+        }
+      }, 160);
+    }
 
     function formatNumber(value) {
       return Number(value).toFixed(1).replace(/\.0$/, "");
@@ -965,6 +1069,7 @@
           protein_target: proteinValue,
           fiber_target: fiberValue,
         });
+        showLoadingOverlay("Refreshing meals...");
         try {
           const response = await fetch(`/api/chooser?${query.toString()}`);
           if (!response.ok) {
@@ -982,6 +1087,8 @@
           render();
         } catch (error) {
           setError(error.message || "Failed to recompute chooser.");
+        } finally {
+          hideLoadingOverlay();
         }
       }
 
@@ -1318,6 +1425,7 @@
         if (!confirmLeaveIfNeeded()) {
           return;
         }
+        showLoadingOverlay("Opening day...");
         window.location.assign(buildNavigationUrl(dateValue));
       }
 
@@ -1388,6 +1496,25 @@
         syncHeroSpacer();
       });
       window.addEventListener("resize", syncHeroSpacer);
+      window.addEventListener("pageshow", hideLoadingOverlay);
+
+      document.addEventListener("click", (event) => {
+        const link = event.target.closest("a[href]");
+        if (!link || link.target === "_blank" || link.hasAttribute("download")) {
+          return;
+        }
+        const url = new URL(link.href, window.location.href);
+        if (url.origin !== window.location.origin || url.href === window.location.href) {
+          return;
+        }
+        if (!confirmLeaveIfNeeded()) {
+          event.preventDefault();
+          return;
+        }
+        event.preventDefault();
+        showLoadingOverlay("Opening page...");
+        window.location.assign(url.href);
+      });
 
       render();
     }

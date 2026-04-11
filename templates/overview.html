@@ -29,6 +29,10 @@
       color: var(--text);
     }
 
+    body.is-loading {
+      cursor: progress;
+    }
+
     .page {
       max-width: 1200px;
       margin: 0 auto;
@@ -152,6 +156,76 @@
     .mobile-list {
       display: none;
       gap: 12px;
+    }
+
+    .loading-overlay[hidden] {
+      display: none;
+    }
+
+    .loading-overlay {
+      position: fixed;
+      inset: 0;
+      z-index: 999;
+      display: grid;
+      place-items: center;
+      padding: 20px;
+      background: rgba(13, 16, 22, 0.72);
+      backdrop-filter: blur(8px);
+      opacity: 0;
+      visibility: hidden;
+      pointer-events: none;
+      transition: opacity 140ms ease;
+    }
+
+    .loading-overlay.is-visible {
+      opacity: 1;
+      visibility: visible;
+      pointer-events: all;
+    }
+
+    .loading-panel {
+      width: min(420px, calc(100vw - 32px));
+      padding: 16px;
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      background: rgba(23, 26, 33, 0.96);
+      box-shadow: 0 18px 50px var(--shadow);
+    }
+
+    .loading-title {
+      margin-bottom: 10px;
+      font-weight: 700;
+    }
+
+    .loading-text {
+      margin-bottom: 12px;
+      color: var(--muted);
+    }
+
+    .loading-progress {
+      height: 10px;
+      overflow: hidden;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: rgba(255, 255, 255, 0.05);
+    }
+
+    .loading-progress-bar {
+      width: 42%;
+      height: 100%;
+      border-radius: inherit;
+      background: linear-gradient(90deg, #4d77ff, var(--accent), #8ef0c6);
+      animation: loading-slide 1.15s ease-in-out infinite;
+    }
+
+    @keyframes loading-slide {
+      from {
+        transform: translateX(-120%);
+      }
+
+      to {
+        transform: translateX(320%);
+      }
     }
 
     .day-card {
@@ -374,13 +448,68 @@
       </div>
     </section>
   </div>
+  <div class="loading-overlay" id="loadingOverlay" hidden aria-live="polite" aria-busy="true">
+    <div class="loading-panel">
+      <div class="loading-title">Loading</div>
+      <div class="loading-text" id="loadingMessage">Opening page...</div>
+      <div class="loading-progress" aria-hidden="true">
+        <div class="loading-progress-bar"></div>
+      </div>
+    </div>
+  </div>
 
   <script>
-    for (const row of document.querySelectorAll("tbody tr[data-href]")) {
-      row.addEventListener("click", () => {
-        window.location.assign(row.dataset.href);
+    const loadingOverlay = document.getElementById("loadingOverlay");
+    const loadingMessage = document.getElementById("loadingMessage");
+
+    function showLoadingOverlay(message) {
+      loadingMessage.textContent = message;
+      loadingOverlay.hidden = false;
+      document.body.classList.add("is-loading");
+      requestAnimationFrame(() => {
+        loadingOverlay.classList.add("is-visible");
       });
     }
+
+    function hideLoadingOverlay() {
+      loadingOverlay.classList.remove("is-visible");
+      document.body.classList.remove("is-loading");
+      window.setTimeout(() => {
+        if (!loadingOverlay.classList.contains("is-visible")) {
+          loadingOverlay.hidden = true;
+        }
+      }, 160);
+    }
+
+    function navigateWithLoader(url, message) {
+      showLoadingOverlay(message);
+      window.location.assign(url);
+    }
+
+    function isInternalNavigation(link) {
+      if (!link || link.target === "_blank" || link.hasAttribute("download")) {
+        return false;
+      }
+      const url = new URL(link.href, window.location.href);
+      return url.origin === window.location.origin && url.href !== window.location.href;
+    }
+
+    for (const row of document.querySelectorAll("tbody tr[data-href]")) {
+      row.addEventListener("click", () => {
+        navigateWithLoader(row.dataset.href, "Opening day...");
+      });
+    }
+
+    document.addEventListener("click", (event) => {
+      const link = event.target.closest("a[href]");
+      if (!isInternalNavigation(link)) {
+        return;
+      }
+      event.preventDefault();
+      navigateWithLoader(link.href, "Opening page...");
+    });
+
+    window.addEventListener("pageshow", hideLoadingOverlay);
   </script>
 </body>
 </html>
