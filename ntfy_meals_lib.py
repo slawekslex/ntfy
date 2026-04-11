@@ -1,6 +1,8 @@
 from __future__ import annotations
 
 import base64
+from contextlib import contextmanager
+import fcntl
 import json
 import os
 import time
@@ -9,6 +11,7 @@ import uuid
 from collections import defaultdict
 from dataclasses import dataclass
 from datetime import datetime
+from pathlib import Path
 from typing import Dict, List, Optional
 
 import requests
@@ -17,6 +20,8 @@ import requests
 ORION_BASE = "https://orion-api.ntfy.pl/api/v2.0"
 MEAL_ORDER = ["BREAKFAST", "SECOND-BREAKFAST", "LUNCH", "TEA", "DINNER"]
 CACHE_FILE = ".ntfy_cookie_cache.json"
+DATA_DIR_ENV_VAR = "LIVEKID_DATA_DIR"
+DEFAULT_DATA_DIR = ".data"
 DELIVERY_EXPANSIONS = (
     "address_id,delivery_items,delivery_items.simple_products,"
     "delivery_items.diet_variant_meals,"
@@ -32,6 +37,38 @@ DELIVERY_EXPANSIONS = (
 class SessionData:
     token: str
     user_id: int
+
+
+def resolve_data_dir() -> Path:
+    return Path(os.getenv(DATA_DIR_ENV_VAR, DEFAULT_DATA_DIR))
+
+
+def resolve_cache_path(path: str | os.PathLike[str] | None = None) -> Path:
+    if path is not None:
+        return Path(path)
+    return resolve_data_dir() / CACHE_FILE
+
+
+def lock_path_for(target: Path) -> Path:
+    return target.parent / f"{target.name}.lock"
+
+
+@contextmanager
+def file_lock(lock_path: Path):
+    lock_path.parent.mkdir(parents=True, exist_ok=True)
+    with open(lock_path, "a+", encoding="utf-8") as lock_file:
+        fcntl.flock(lock_file.fileno(), fcntl.LOCK_EX)
+        try:
+            yield
+        finally:
+            fcntl.flock(lock_file.fileno(), fcntl.LOCK_UN)
+
+
+def write_json_atomic(path: Path, payload: dict) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    temp_path = path.with_name(f"{path.name}.{os.getpid()}.{time.time_ns()}.tmp")
+    temp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2), encoding="utf-8")
+    os.replace(temp_path, path)
 
 
 class NtfyClient:
@@ -200,27 +237,29 @@ def cookie_dict_to_string(cookies: Dict[str, str]) -> str:
     return "; ".join(f"{key}={value}" for key, value in cookies.items())
 
 
-def load_cookie_cache(path: str = CACHE_FILE) -> Optional[str]:
-    if not os.path.exists(path):
+def load_cookie_cache(path: str | os.PathLike[str] | None = None) -> Optional[str]:
+    cache_path = resolve_cache_path(path)
+    if not cache_path.exists():
         return None
-    try:
-        with open(path, "r", encoding="utf-8") as cache_file:
-            payload = json.load(cache_file)
-    except Exception:  # pylint: disable=broad-except
+    with file_lock(lock_path_for(cache_path)):
+        try:
+            payload = json.loads(cache_path.read_text(encoding="utf-8"))
+        except Exception:  # pylint: disable=broad-except
+            return None
+        cookie_str = payload.get("cookie_str")
+        if isinstance(cookie_str, str) and cookie_str.strip():
+            return cookie_str.strip()
         return None
-    cookie_str = payload.get("cookie_str")
-    if isinstance(cookie_str, str) and cookie_str.strip():
-        return cookie_str.strip()
-    return None
 
 
-def save_cookie_cache(cookie_str: str, path: str = CACHE_FILE) -> None:
+def save_cookie_cache(cookie_str: str, path: str | os.PathLike[str] | None = None) -> None:
+    cache_path = resolve_cache_path(path)
     payload = {
         "cookie_str": cookie_str,
         "cached_at": datetime.now().isoformat(timespec="seconds"),
     }
-    with open(path, "w", encoding="utf-8") as cache_file:
-        json.dump(payload, cache_file, ensure_ascii=False, indent=2)
+    with file_lock(lock_path_for(cache_path)):
+        write_json_atomic(cache_path, payload)
 
 
 def decode_jwt_payload(token: str) -> dict:

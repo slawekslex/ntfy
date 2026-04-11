@@ -3,13 +3,19 @@
 from __future__ import annotations
 
 import argparse
+import base64
 import hashlib
 import json
 import os
+import subprocess
 from concurrent.futures import ThreadPoolExecutor
 from datetime import datetime, timedelta
+from pathlib import Path
+from threading import Lock
 from urllib.parse import urlparse
-from typing import Dict, Tuple
+from typing import Dict, List, Tuple
+
+import requests
 
 from flask import Flask, Response, abort, jsonify, redirect, render_template, request, session, url_for
 
@@ -17,6 +23,7 @@ from ntfy_meals_lib import (
     DELIVERY_EXPANSIONS,
     NtfyClient,
     apply_optimal_plan_via_api,
+    build_rows_by_meal,
     build_chooser_payload,
     choose_delivery_diet_id,
     choices_from_indices,
@@ -49,6 +56,107 @@ def parse_args() -> argparse.Namespace:
     return parser.parse_args()
 
 
+def selected_name_from_rows(rows: List[dict]) -> str | None:
+    for row in rows:
+        name = row.get("name")
+        if row.get("selected") and name:
+            return str(name)
+    for row in rows:
+        name = row.get("name")
+        if name:
+            return str(name)
+    return None
+
+
+def nela_obiad_name(delivery_payload: dict | None) -> str | None:
+    if not delivery_payload or not delivery_payload.get("results"):
+        return None
+    _, rows_by_meal = build_rows_by_meal(delivery_payload)
+    for meal_label, rows in rows_by_meal.items():
+        if meal_label.lower().startswith("obiad"):
+            return selected_name_from_rows(rows)
+    return None
+
+
+def select_page_first_meal_name(delivery_payload: dict | None) -> str | None:
+    if not delivery_payload or not delivery_payload.get("results"):
+        return None
+
+    includes = delivery_payload.get("includes", {})
+    products = {product["id"]: product for product in includes.get("simple_products", [])}
+    for item in includes.get("delivery_items", []):
+        if item.get("related_item_type") != "ITEM":
+            continue
+        if not item.get("is_simple_product_selected_by_user"):
+            continue
+        product_name = (products.get(item.get("simple_product_id")) or {}).get("name")
+        if product_name:
+            return str(product_name)
+    return None
+
+
+def select_first_meal_name(delivery_payload: dict | None) -> str | None:
+    if not delivery_payload or not delivery_payload.get("results"):
+        return None
+    _, rows_by_meal = build_rows_by_meal(delivery_payload)
+    for rows in rows_by_meal.values():
+        name = selected_name_from_rows(rows)
+        if name:
+            return name
+    return None
+
+
+def livekid_kid_id(env_vars: Dict[str, str]) -> int | None:
+    token = os.getenv("LIVEKID_BEARER_TOKEN") or env_vars.get("LIVEKID_BEARER_TOKEN")
+    if not token:
+        return None
+    parts = token.split(".")
+    if len(parts) != 3:
+        return None
+    try:
+        payload = parts[1]
+        payload += "=" * (-len(payload) % 4)
+        decoded = base64.urlsafe_b64decode(payload.encode("ascii")).decode("utf-8")
+        claims = json.loads(decoded)
+    except (OSError, UnicodeDecodeError, ValueError, json.JSONDecodeError):
+        return None
+    kid = claims.get("kid")
+    if kid is None:
+        return None
+    try:
+        return int(kid)
+    except (TypeError, ValueError):
+        return None
+
+
+def livekid_has_obiad(presence_payload: dict | None) -> bool:
+    if not presence_payload:
+        return False
+    day_value = str(presence_payload.get("day") or presence_payload.get("date") or "").strip()
+    if day_value:
+        try:
+            if datetime.strptime(day_value, "%Y-%m-%d").weekday() >= 5:
+                return False
+        except ValueError:
+            pass
+    meals = presence_payload.get("meals") or []
+    return any(str(meal.get("name") or "").strip().lower() == "obiad" for meal in meals)
+
+
+def format_livekid_menu(menu_payload: dict | None) -> str:
+    if not menu_payload or menu_payload.get("status") == "missing":
+        return "Brak Menu"
+    parts = [str(menu_payload.get("zupa") or "").strip(), str(menu_payload.get("drugie") or "").strip()]
+    parts = [part for part in parts if part]
+    return " | ".join(parts) if parts else "Brak Menu"
+
+
+def livekid_meal_name_from_payloads(presence_payload: dict | None, menu_payload: dict | None) -> str | None:
+    if not livekid_has_obiad(presence_payload):
+        return None
+    return format_livekid_menu(menu_payload)
+
+
 def create_app(args: argparse.Namespace) -> Flask:
     app = Flask(__name__)
     env_vars = load_env_file()
@@ -65,6 +173,9 @@ def create_app(args: argparse.Namespace) -> Flask:
     image_cache: Dict[str, Tuple[bytes, str]] = {}
     chooser_cache: Dict[str, dict] = {}
     context_cache: Dict[str, dict] = {}
+    livekid_cache: Dict[str, str | None] = {}
+    ntfy_nela_cache: Dict[str, str] = {}
+    cache_lock = Lock()
 
     def requested_path() -> str:
         query = request.query_string.decode("utf-8")
@@ -116,6 +227,17 @@ def create_app(args: argparse.Namespace) -> Flask:
     def logout() -> Response:
         session.clear()
         return redirect(url_for("login"))
+
+    def clear_all_caches() -> None:
+        with cache_lock:
+            image_cache.clear()
+            chooser_cache.clear()
+            context_cache.clear()
+            livekid_cache.clear()
+            ntfy_nela_cache.clear()
+        livekid_menu_cache_path = Path(__file__).resolve().parent / ".data" / ".livekid_menu_cache.json"
+        if livekid_menu_cache_path.exists():
+            livekid_menu_cache_path.unlink()
 
     def with_image_urls(chooser_payload: dict) -> dict:
         for meal in chooser_payload["meals"]:
@@ -177,6 +299,156 @@ def create_app(args: argparse.Namespace) -> Flask:
             (current - timedelta(days=1)).isoformat(),
             (current + timedelta(days=1)).isoformat(),
         )
+
+    def fetch_delivery_payload_for_diet(client: NtfyClient, date_str: str, delivery_diet_id: int | None) -> dict | None:
+        if delivery_diet_id is None:
+            return None
+        return client.get_data(
+            path=f"users/{client.user_id}/deliveries",
+            params={
+                "date": date_str,
+                "delivery_diet_id": str(delivery_diet_id),
+                "status__in": "TO-BE-REALIZED,REALIZED",
+                "aggregate_by__in": "nutritional_data:date",
+                "expansions__in": DELIVERY_EXPANSIONS,
+            },
+        )
+
+    def fetch_delivery_payload_for_date(client: NtfyClient, date_str: str) -> dict:
+        return client.get_data(
+            path=f"users/{client.user_id}/deliveries",
+            params={
+                "date": date_str,
+                "status__in": "TO-BE-REALIZED,REALIZED",
+                "aggregate_by__in": "nutritional_data:date",
+                "expansions__in": DELIVERY_EXPANSIONS,
+            },
+        )
+
+    def fetch_livekid_presence(date_str: str) -> dict | None:
+        kid_id = livekid_kid_id(env_vars)
+        token = os.getenv("LIVEKID_BEARER_TOKEN") or env_vars.get("LIVEKID_BEARER_TOKEN")
+        if not kid_id or not token:
+            return None
+        response = requests.get(
+            f"https://pl.api.api-livekid-prod.com/v1/presence/{date_str}/{kid_id}",
+            headers={
+                "Authorization": f"Bearer {token}",
+                "Accept": "application/json",
+                "User-Agent": "meal-chooser-web/1.0",
+            },
+            timeout=30,
+        )
+        response.raise_for_status()
+        return response.json()
+
+    def fetch_livekid_menu(date_str: str) -> dict | None:
+        try:
+            from lifekid_menu import get_menu_for_day
+        except ImportError:
+            venv_python = Path(__file__).resolve().parent / ".venv" / "bin" / "python"
+            if not venv_python.exists():
+                raise
+            marker = "__LIVEKID_JSON__"
+            script = (
+                "import json\n"
+                "from lifekid_menu import get_menu_for_day\n"
+                "payload = get_menu_for_day("
+                f"'{date_str}'"
+                ", env_path='.env')\n"
+                f"print('{marker}')\n"
+                "print(json.dumps(payload, ensure_ascii=False))\n"
+            )
+            result = subprocess.run(
+                [str(venv_python), "-c", script],
+                check=True,
+                capture_output=True,
+                text=True,
+                cwd=Path(__file__).resolve().parent,
+            )
+            marker_index = result.stdout.rfind(f"{marker}\n")
+            if marker_index == -1:
+                raise ValueError("Could not parse LiveKid menu output.")
+            return json.loads(result.stdout[marker_index + len(marker) + 1 :].strip())
+        return get_menu_for_day(date_str, env_path=".env")
+
+    def livekid_meal_name_for_day(date_str: str) -> str | None:
+        with cache_lock:
+            if date_str in livekid_cache:
+                return livekid_cache[date_str]
+        presence_payload = fetch_livekid_presence(date_str)
+        if not livekid_has_obiad(presence_payload):
+            with cache_lock:
+                livekid_cache[date_str] = None
+            return None
+        menu_payload = fetch_livekid_menu(date_str)
+        meal_name = livekid_meal_name_from_payloads(presence_payload, menu_payload)
+        with cache_lock:
+            livekid_cache[date_str] = meal_name
+        return meal_name
+
+    def ntfy_meal_name_for_day(
+        client: NtfyClient,
+        date_str: str,
+        *,
+        nela_delivery_diet_id: int | None,
+        select_delivery_diet_id: int | None,
+    ) -> str:
+        with cache_lock:
+            cached = ntfy_nela_cache.get(date_str)
+        if cached is not None:
+            return cached
+
+        ntfy_meal = nela_obiad_name(fetch_delivery_payload_for_diet(client, date_str, nela_delivery_diet_id))
+        if ntfy_meal is None:
+            ntfy_meal = select_page_first_meal_name(fetch_delivery_payload_for_date(client, date_str))
+        if ntfy_meal is None:
+            ntfy_meal = select_first_meal_name(fetch_delivery_payload_for_diet(client, date_str, select_delivery_diet_id))
+
+        meal_name = ntfy_meal or "-"
+        with cache_lock:
+            ntfy_nela_cache[date_str] = meal_name
+        return meal_name
+
+    def build_nela_overview_row(
+        date_str: str,
+        *,
+        nela_delivery_diet_id: int | None,
+        select_delivery_diet_id: int | None,
+        cookie_str: str,
+    ) -> dict:
+        ntfy_meal_name = "-"
+        livekid_meal_name = "-"
+        errors = []
+        try:
+            client = NtfyClient(explicit_cookie_str=cookie_str)
+            client.ensure_authenticated()
+            try:
+                livekid_meal = livekid_meal_name_for_day(date_str)
+                if livekid_meal:
+                    livekid_meal_name = livekid_meal
+            except Exception as exc:  # pylint: disable=broad-except
+                errors.append(f"LiveKid: {exc}")
+
+            try:
+                ntfy_meal_name = ntfy_meal_name_for_day(
+                    client,
+                    date_str,
+                    nela_delivery_diet_id=nela_delivery_diet_id,
+                    select_delivery_diet_id=select_delivery_diet_id,
+                )
+            except Exception as exc:  # pylint: disable=broad-except
+                errors.append(f"NTFY: {exc}")
+        except Exception as exc:  # pylint: disable=broad-except
+            errors.append(str(exc))
+
+        return {
+            "date": date_str,
+            "day_of_week": datetime.strptime(date_str, "%Y-%m-%d").strftime("%A"),
+            "ntfy_meal_name": ntfy_meal_name,
+            "livekid_meal_name": livekid_meal_name,
+            "error": "; ".join(errors) if errors else None,
+        }
 
     def build_overview_row(
         date_str: str,
@@ -265,7 +537,11 @@ def create_app(args: argparse.Namespace) -> Flask:
             },
         )
         delivery_diet_id = choose_delivery_diet_id(delivery_diets, args.diet_name)
-        overview_dates = [(start + timedelta(days=offset)).isoformat() for offset in range(21)]
+        overview_dates = [
+            day.isoformat()
+            for offset in range(21)
+            if (day := start + timedelta(days=offset)).weekday() < 5
+        ]
         with ThreadPoolExecutor(max_workers=min(8, len(overview_dates))) as executor:
             rows = list(
                 executor.map(
@@ -289,6 +565,68 @@ def create_app(args: argparse.Namespace) -> Flask:
             next_start=next_start,
             diet_name=args.diet_name,
         )
+
+    @app.get("/nela")
+    def nela_overview() -> str:
+        start_date = request.args.get("start", args.date)
+        validate_date(start_date)
+        start = datetime.strptime(start_date, "%Y-%m-%d").date()
+
+        base_client = NtfyClient(explicit_cookie_str=args.cookies)
+        base_client.ensure_authenticated()
+        delivery_diets = base_client.get_data(
+            path=f"users/{base_client.user_id}/delivery-diets",
+            params={
+                "last_delivery_day__gte": start_date,
+                "sort": "first_delivery_day.asc",
+                "expansions__in": "diets",
+            },
+        )
+
+        try:
+            nela_delivery_diet_id = choose_delivery_diet_id(delivery_diets, "Nela")
+        except ValueError:
+            nela_delivery_diet_id = None
+
+        try:
+            select_delivery_diet_id = choose_delivery_diet_id(delivery_diets, "Select")
+        except ValueError:
+            select_delivery_diet_id = None
+
+        overview_dates = [
+            day.isoformat()
+            for offset in range(21)
+            if (day := start + timedelta(days=offset)).weekday() < 5
+        ]
+        with ThreadPoolExecutor(max_workers=min(8, len(overview_dates))) as executor:
+            rows = list(
+                executor.map(
+                    lambda date_str: build_nela_overview_row(
+                        date_str,
+                        nela_delivery_diet_id=nela_delivery_diet_id,
+                        select_delivery_diet_id=select_delivery_diet_id,
+                        cookie_str=base_client.cookie_str or "",
+                    ),
+                    overview_dates,
+                )
+            )
+
+        prev_start = (start - timedelta(days=21)).isoformat()
+        next_start = (start + timedelta(days=21)).isoformat()
+        return render_template(
+            "nela.html",
+            overview_rows=rows,
+            start_date=start_date,
+            prev_start=prev_start,
+            next_start=next_start,
+        )
+
+    @app.post("/nela/refresh")
+    def nela_refresh() -> Response:
+        start_date = request.form.get("start", args.date)
+        validate_date(start_date)
+        clear_all_caches()
+        return redirect(url_for("nela_overview", start=start_date))
 
     @app.get("/day")
     def day_view() -> str:

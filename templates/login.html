@@ -1,0 +1,119 @@
+<!doctype html>
+<html lang="en">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Login</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --panel: #171a21;
+      --panel-alt: #1d2230;
+      --text: #edf2ff;
+      --muted: #aeb8d6;
+      --border: #2b3244;
+      --danger: #ffd0d0;
+      --danger-bg: rgba(255, 140, 140, 0.12);
+      --shadow: rgba(0, 0, 0, 0.25);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      min-height: 100vh;
+      display: grid;
+      place-items: center;
+      padding: 24px;
+      font-family: Inter, system-ui, sans-serif;
+      background: linear-gradient(180deg, #0d1016 0%, #111522 100%);
+      color: var(--text);
+    }
+
+    .card {
+      width: min(100%, 420px);
+      background: rgba(23, 26, 33, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 24px;
+      box-shadow: 0 18px 50px var(--shadow);
+      display: grid;
+      gap: 16px;
+    }
+
+    h1,
+    p {
+      margin: 0;
+    }
+
+    .subtitle {
+      color: var(--muted);
+      line-height: 1.5;
+    }
+
+    form {
+      display: grid;
+      gap: 14px;
+    }
+
+    label {
+      display: grid;
+      gap: 6px;
+      color: var(--muted);
+      font-size: 0.95rem;
+    }
+
+    input {
+      width: 100%;
+      background: #111623;
+      color: var(--text);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 12px 14px;
+      font: inherit;
+    }
+
+    button {
+      min-height: 46px;
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      background: var(--panel-alt);
+      color: var(--text);
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .error {
+      padding: 12px 14px;
+      border-radius: 12px;
+      border: 1px solid rgba(255, 140, 140, 0.35);
+      background: var(--danger-bg);
+      color: var(--danger);
+    }
+  </style>
+</head>
+<body>
+  <section class="card">
+    <div>
+      <h1>Login</h1>
+      <p class="subtitle">Enter the app password to access the meal chooser.</p>
+    </div>
+
+    {% if error_message %}
+    <div class="error">{{ error_message }}</div>
+    {% endif %}
+
+    <form method="post" action="/login">
+      <input type="hidden" name="next" value="{{ next_url }}">
+      <label>
+        Password
+        <input type="password" name="password" autocomplete="current-password" required autofocus>
+      </label>
+      <button type="submit">Sign in</button>
+    </form>
+  </section>
+</body>
+</html>

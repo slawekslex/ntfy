@@ -1,0 +1,274 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>Nela meals</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --panel: #171a21;
+      --panel-alt: #1d2230;
+      --text: #edf2ff;
+      --muted: #aeb8d6;
+      --border: #2b3244;
+      --danger-bg: rgba(255, 140, 140, 0.14);
+      --shadow: rgba(0, 0, 0, 0.25);
+    }
+
+    * {
+      box-sizing: border-box;
+    }
+
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, sans-serif;
+      background: linear-gradient(180deg, #0d1016 0%, #111522 100%);
+      color: var(--text);
+    }
+
+    .page {
+      max-width: 1100px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .card {
+      background: rgba(23, 26, 33, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 18px;
+      padding: 20px;
+      box-shadow: 0 18px 50px var(--shadow);
+      backdrop-filter: blur(12px);
+    }
+
+    .toolbar {
+      display: flex;
+      justify-content: flex-end;
+      margin-bottom: 16px;
+    }
+
+    .button {
+      text-decoration: none;
+      color: var(--text);
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 14px;
+      font: inherit;
+      font-weight: 600;
+      cursor: pointer;
+    }
+
+    .table-wrap {
+      overflow-x: auto;
+    }
+
+    .legend-item,
+    .status-badge {
+      display: inline-flex;
+      align-items: center;
+      gap: 8px;
+      padding: 6px 10px;
+      border-radius: 999px;
+      border: 1px solid var(--border);
+      background: var(--panel-alt);
+      color: var(--muted);
+      font-size: 0.85rem;
+      white-space: nowrap;
+    }
+
+    .status-dot {
+      width: 10px;
+      height: 10px;
+      border-radius: 999px;
+      flex: 0 0 auto;
+    }
+
+    .status-both {
+      background: rgba(120, 220, 160, 0.12);
+    }
+
+    .status-both .status-dot {
+      background: #78dca0;
+    }
+
+    .status-ntfy {
+      background: rgba(122, 162, 255, 0.12);
+    }
+
+    .status-ntfy .status-dot {
+      background: #7aa2ff;
+    }
+
+    .status-livekid {
+      background: rgba(255, 204, 102, 0.12);
+    }
+
+    .status-livekid .status-dot {
+      background: #ffcc66;
+    }
+
+    .status-neither {
+      background: rgba(255, 255, 255, 0.04);
+    }
+
+    .status-neither .status-dot {
+      background: #7f8aa3;
+    }
+
+    table {
+      width: 100%;
+      border-collapse: collapse;
+    }
+
+    th,
+    td {
+      padding: 12px 14px;
+      border-bottom: 1px solid var(--border);
+      text-align: left;
+      vertical-align: top;
+    }
+
+    th {
+      color: var(--muted);
+      font-size: 0.92rem;
+      font-weight: 600;
+      white-space: nowrap;
+    }
+
+    td.meal-cell {
+      white-space: normal;
+      word-break: break-word;
+    }
+
+    .muted {
+      color: var(--muted);
+    }
+
+    .error-row {
+      background: var(--danger-bg);
+    }
+
+    .mobile-list {
+      display: none;
+      gap: 12px;
+    }
+
+    .day-card {
+      display: grid;
+      gap: 10px;
+      background: rgba(15, 18, 26, 0.85);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      padding: 14px;
+    }
+
+    .day-card.error-row {
+      background: rgba(255, 140, 140, 0.1);
+    }
+
+    .day-card-header,
+    .day-card-row {
+      display: flex;
+      justify-content: space-between;
+      gap: 12px;
+      align-items: start;
+    }
+
+    .day-card-date {
+      font-weight: 700;
+    }
+
+    .day-card-label {
+      color: var(--muted);
+      min-width: 70px;
+    }
+
+    .day-card-value {
+      text-align: right;
+      word-break: break-word;
+    }
+
+    @media (max-width: 720px) {
+      .page {
+        padding: 14px;
+      }
+
+      .table-wrap {
+        display: none;
+      }
+
+      .mobile-list {
+        display: grid;
+      }
+    }
+  </style>
+</head>
+<body>
+  <div class="page">
+    <section class="card">
+      <div class="toolbar">
+        <form method="post" action="/nela/refresh">
+          <input type="hidden" name="start" value="{{ start_date }}">
+          <button class="button" type="submit">Odśwież</button>
+        </form>
+      </div>
+      <div class="table-wrap">
+        <table>
+          <thead>
+            <tr>
+              <th>Date</th>
+              <th>Day</th>
+              <th>Status</th>
+              <th>NTFY</th>
+              <th>LiveKid</th>
+            </tr>
+          </thead>
+          <tbody>
+            {% for row in overview_rows %}
+            {% set has_ntfy = row.ntfy_meal_name != '-' %}
+            {% set has_livekid = row.livekid_meal_name != '-' %}
+            {% set status_class = 'status-both' if has_ntfy and has_livekid else 'status-ntfy' if has_ntfy else 'status-livekid' if has_livekid else 'status-neither' %}
+            {% set status_label = 'Both' if has_ntfy and has_livekid else 'NTFY' if has_ntfy else 'LiveKid' if has_livekid else 'Neither' %}
+            <tr class="{{ 'error-row' if row.error else '' }}">
+              <td>{{ row.date }}</td>
+              <td class="muted">{{ row.day_of_week }}</td>
+              <td><span class="status-badge {{ status_class }}"><span class="status-dot"></span>{{ status_label }}</span></td>
+              <td class="meal-cell">{{ row.ntfy_meal_name }}</td>
+              <td class="meal-cell">{{ row.livekid_meal_name }}</td>
+            </tr>
+            {% endfor %}
+          </tbody>
+        </table>
+      </div>
+
+      <div class="mobile-list">
+        {% for row in overview_rows %}
+        {% set has_ntfy = row.ntfy_meal_name != '-' %}
+        {% set has_livekid = row.livekid_meal_name != '-' %}
+        {% set status_class = 'status-both' if has_ntfy and has_livekid else 'status-ntfy' if has_ntfy else 'status-livekid' if has_livekid else 'status-neither' %}
+        {% set status_label = 'Both' if has_ntfy and has_livekid else 'NTFY' if has_ntfy else 'LiveKid' if has_livekid else 'Neither' %}
+        <div class="day-card {{ 'error-row' if row.error else '' }}">
+          <div class="day-card-header">
+            <div>
+              <div class="day-card-date">{{ row.date }}</div>
+              <div class="muted">{{ row.day_of_week }}</div>
+            </div>
+            <div class="status-badge {{ status_class }}"><span class="status-dot"></span>{{ status_label }}</div>
+          </div>
+          <div class="day-card-row">
+            <div class="day-card-label">NTFY</div>
+            <div class="day-card-value">{{ row.ntfy_meal_name }}</div>
+          </div>
+          <div class="day-card-row">
+            <div class="day-card-label">LiveKid</div>
+            <div class="day-card-value">{{ row.livekid_meal_name }}</div>
+          </div>
+        </div>
+        {% endfor %}
+      </div>
+    </section>
+  </div>
+</body>
+</html>
