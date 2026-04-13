@@ -214,6 +214,11 @@ def nela_livekid_favourite_product_id(date_str: str) -> str:
     return f"livekid:{date_str}"
 
 
+def nela_default_start_date_str() -> str:
+    """First day of the /nela window when ?start= is omitted (local server calendar date)."""
+    return datetime.now().date().isoformat()
+
+
 def nela_favourites_file_path() -> Path:
     return Path(__file__).resolve().parent / ".data" / "nela_meal_favourites.json"
 
@@ -958,7 +963,7 @@ def create_app(args: argparse.Namespace, *, nela_favourites_path: Path | None = 
 
     @app.get("/nela")
     def nela_overview() -> str:
-        start_date = request.args.get("start", args.date)
+        start_date = nela_default_start_date_str()
         validate_date(start_date)
         sync_mode = request.args.get("sync") == "1"
         _log.info("NELA flow: GET /nela shell start=%s sync=%s", start_date, sync_mode)
@@ -970,23 +975,17 @@ def create_app(args: argparse.Namespace, *, nela_favourites_path: Path | None = 
             return render_template(
                 "nela.html",
                 overview_rows=payload["overview_rows"],
-                start_date=payload["start_date"],
-                prev_start=payload["prev_start"],
-                next_start=payload["next_start"],
                 sync_mode=True,
             )
         return render_template(
             "nela.html",
             overview_rows=[],
-            start_date=start_date,
-            prev_start=start_date,
-            next_start=start_date,
             sync_mode=False,
         )
 
     @app.get("/api/nela/overview")
     def nela_overview_api() -> Response:
-        start_date = request.args.get("start", args.date)
+        start_date = nela_default_start_date_str()
         validate_date(start_date)
         timing_agg = TimingAgg() if _timing_enabled() else None
         _log.info("NELA flow: GET /api/nela/overview start=%s", start_date)
@@ -997,10 +996,8 @@ def create_app(args: argparse.Namespace, *, nela_favourites_path: Path | None = 
 
     @app.post("/nela/refresh")
     def nela_refresh() -> Response:
-        start_date = request.form.get("start", args.date)
-        validate_date(start_date)
         clear_all_caches()
-        return redirect(url_for("nela_overview", start=start_date))
+        return redirect(url_for("nela_overview"))
 
     @app.get("/nela_opcje")
     def nela_opcje_view() -> str:

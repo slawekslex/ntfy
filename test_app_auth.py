@@ -69,15 +69,15 @@ class AppAuthTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertIn(b"Wrong password.", response.data)
 
-    def test_nela_refresh_redirects_back_to_current_start(self) -> None:
+    def test_nela_refresh_redirects_to_nela_overview(self) -> None:
         with self.client.session_transaction() as current_session:
             current_session["authenticated"] = True
             current_session.permanent = True
 
-        response = self.client.post("/nela/refresh", data={"start": "2026-04-20"})
+        response = self.client.post("/nela/refresh", data={})
 
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.location, "/nela?start=2026-04-20")
+        self.assertEqual(response.location, "/nela")
 
     def test_nela_opcje_redirects_to_login_when_not_authenticated(self) -> None:
         response = self.client.get("/nela_opcje?date=2026-04-11")

@@ -296,7 +296,6 @@
           action="/nela/refresh"
           onsubmit="(function(){var overlay=document.getElementById('loadingOverlay');var message=document.getElementById('loadingMessage');if(message){message.textContent='Odświeżanie danych...';}if(overlay){overlay.hidden=false;overlay.classList.add('is-visible');}document.body.classList.add('is-loading');})()"
         >
-          <input type="hidden" name="start" value="{{ start_date }}">
           <button class="button" type="submit">Odśwież</button>
         </form>
       </div>
@@ -379,7 +378,6 @@
     const refreshForm = document.querySelector('form[action="/nela/refresh"]');
     const tableBody = document.getElementById("nelaTableBody");
     const mobileList = document.getElementById("nelaMobileList");
-    const startDate = "{{ start_date }}";
     const syncMode = {{ "true" if sync_mode else "false" }};
     let loadingStageTimers = [];
     let overviewFetchInProgress = false;
@@ -493,7 +491,7 @@
       showRefreshLoadingOverlay();
       let loaded = false;
       try {
-        const response = await fetch(`/api/nela/overview?start=${encodeURIComponent(startDate)}`, {
+        const response = await fetch("/api/nela/overview", {
           credentials: "same-origin",
           cache: "no-store"
         });
@@ -508,7 +506,7 @@
         loadingMessage.textContent = "Przeglądarka nie obsłużyła ładowania asynchronicznego. Przełączam na tryb zgodności...";
         console.error(error);
         window.setTimeout(() => {
-          window.location.assign(`/nela?start=${encodeURIComponent(startDate)}&sync=1`);
+          window.location.assign("/nela?sync=1");
         }, 250);
       } finally {
         overviewFetchInProgress = false;

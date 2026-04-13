@@ -296,10 +296,10 @@ class NelaPageAuthTestCase(unittest.TestCase):
             os.environ["APP_PASSWORD"] = self.previous_password
 
     def test_nela_route_redirects_to_login_when_not_authenticated(self) -> None:
-        response = self.client.get("/nela?start=2026-04-11")
+        response = self.client.get("/nela")
 
         self.assertEqual(response.status_code, 302)
-        self.assertEqual(response.location, "/login?next=/nela?start%3D2026-04-11")
+        self.assertEqual(response.location, "/login?next=/nela")
 
 
 class NelaFavouritesTestCase(unittest.TestCase):
