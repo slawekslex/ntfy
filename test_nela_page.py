@@ -14,7 +14,11 @@ from meal_chooser_web import (
     livekid_has_obiad,
     livekid_kid_id,
     livekid_meal_name_from_payloads,
+    load_nela_favourite_entries,
     load_nela_favourite_product_ids,
+    meal_names_fuzzy_match,
+    nela_livekid_favourite_product_id,
+    nela_meal_favourite_matches,
     nela_obiad_name,
     obiad_meal_from_rows_by_meal,
     select_first_meal_name,
@@ -217,6 +221,47 @@ class NelaPageLogicTestCase(unittest.TestCase):
             "Rosół",
         )
 
+    def test_meal_names_fuzzy_match_tolerates_minor_typo(self) -> None:
+        a = "Kotlet schabowy z ziemniakami i surówką z kapusty"
+        b = "Kotlet schabowy z ziemniakami i surówką z kapusty "  # trailing space normalized
+        self.assertTrue(meal_names_fuzzy_match(a, b))
+        c = "Kotlet schabowy z ziemniakami i surówką z kapusty."  # punctuation dropped in normalize? we don't strip period
+        # Still long enough; period makes ratio slightly below 1.0 but usually still ≥ 0.9
+        self.assertTrue(meal_names_fuzzy_match(a, c))
+
+    def test_meal_names_fuzzy_match_rejects_short_strings(self) -> None:
+        self.assertFalse(meal_names_fuzzy_match("abc", "abcd"))
+
+    def test_nela_meal_favourite_matches_by_name_when_id_differs(self) -> None:
+        entries = [
+            {
+                "simple_product_id": "old-id",
+                "meal_name": "Pierś z kurczaka w sosie pieczarkowym, ryż, surówka",
+            }
+        ]
+        opt = {
+            "simple_product_id": "new-id",
+            "name": "Pierś z kurczaka w sosie pieczarkowym, ryż, surówka",
+        }
+        self.assertTrue(nela_meal_favourite_matches(opt, entries))
+
+    def test_nela_livekid_favourite_product_id_is_per_date(self) -> None:
+        self.assertEqual(nela_livekid_favourite_product_id("2026-04-14"), "livekid:2026-04-14")
+
+    def test_nela_meal_favourite_matches_livekid_synthetic_id(self) -> None:
+        entries = [
+            {
+                "simple_product_id": "livekid:2026-04-14",
+                "meal_name": "Rosół | Kotlet schabowy",
+            }
+        ]
+        opt = {
+            "simple_product_id": "livekid:2026-04-14",
+            "name": "Rosół | Kotlet schabowy",
+            "livekid": True,
+        }
+        self.assertTrue(nela_meal_favourite_matches(opt, entries))
+
     def test_livekid_kid_id_reads_kid_from_bearer_token(self) -> None:
         env_vars = {"LIVEKID_BEARER_TOKEN": make_livekid_token(kid=76591247)}
         previous_token = os.environ.pop("LIVEKID_BEARER_TOKEN", None)
@@ -258,6 +303,22 @@ class NelaPageAuthTestCase(unittest.TestCase):
 
 
 class NelaFavouritesTestCase(unittest.TestCase):
+    def test_load_nela_favourite_entries_reads_version_one_file(self) -> None:
+        with tempfile.TemporaryDirectory() as tmp:
+            path = Path(tmp) / "fav.json"
+            path.write_text(
+                json.dumps({"version": 1, "simple_product_ids": ["a", "b"]}),
+                encoding="utf-8",
+            )
+            entries = load_nela_favourite_entries(path)
+        self.assertEqual(
+            entries,
+            [
+                {"simple_product_id": "a", "meal_name": ""},
+                {"simple_product_id": "b", "meal_name": ""},
+            ],
+        )
+
     def setUp(self) -> None:
         self.previous_password = os.environ.get("APP_PASSWORD")
         os.environ["APP_PASSWORD"] = "test-password"
@@ -290,15 +351,29 @@ class NelaFavouritesTestCase(unittest.TestCase):
     def test_favourite_api_persists_and_removes_product_id(self) -> None:
         response = self.client.post(
             "/api/nela/favourite",
-            json={"simple_product_id": "prod-42", "favourite": True},
+            json={
+                "simple_product_id": "prod-42",
+                "meal_name": "Test meal",
+                "favourite": True,
+            },
         )
         self.assertEqual(response.status_code, 200)
-        self.assertEqual(response.get_json(), {"simple_product_id": "prod-42", "favourite": True})
+        self.assertEqual(
+            response.get_json(),
+            {"simple_product_id": "prod-42", "meal_name": "Test meal", "favourite": True},
+        )
         self.assertEqual(load_nela_favourite_product_ids(self.favourites_path), {"prod-42"})
+        entries = load_nela_favourite_entries(self.favourites_path)
+        self.assertEqual(len(entries), 1)
+        self.assertEqual(entries[0]["meal_name"], "Test meal")
 
         response = self.client.post(
             "/api/nela/favourite",
-            json={"simple_product_id": "prod-42", "favourite": False},
+            json={
+                "simple_product_id": "prod-42",
+                "meal_name": "Test meal",
+                "favourite": False,
+            },
         )
         self.assertEqual(response.status_code, 200)
         self.assertEqual(load_nela_favourite_product_ids(self.favourites_path), set())

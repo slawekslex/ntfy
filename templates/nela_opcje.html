@@ -329,14 +329,14 @@
   </style>
 </head>
 <body>
-{% macro option_card(opt, fav_ids) %}
+{% macro option_card(opt) %}
       <article class="option-card{{ ' livekid-option' if opt.livekid else '' }}{{ ' selected' if opt.selected else '' }}">
         {% if opt.simple_product_id %}
         <button
           type="button"
           class="favourite-btn"
           data-product-id="{{ opt.simple_product_id }}"
-          aria-pressed="{{ 'true' if opt.simple_product_id in fav_ids else 'false' }}"
+          aria-pressed="{{ 'true' if opt.is_favourite else 'false' }}"
           aria-label="Ulubione danie"
           title="Ulubione"
         >
@@ -402,7 +402,7 @@
       <h2 class="section-title"><span class="section-heart" aria-hidden="true">♥</span>Ulubione</h2>
       <div class="options-grid" id="nela-fav-grid">
         {% for opt in favourite_options %}
-        {{ option_card(opt, favourite_ids) }}
+        {{ option_card(opt) }}
         {% endfor %}
       </div>
     </section>
@@ -411,7 +411,7 @@
       <h2 id="nela-rest-heading" class="section-title"{% if not favourite_options or not other_options %} hidden{% endif %}>Pozostałe opcje</h2>
       <div class="options-grid" id="nela-rest-grid">
         {% for opt in other_options %}
-        {{ option_card(opt, favourite_ids) }}
+        {{ option_card(opt) }}
         {% endfor %}
       </div>
     </section>
@@ -445,10 +445,12 @@
           var card = btn.closest(".option-card");
           var favGrid = document.getElementById("nela-fav-grid");
           var restGrid = document.getElementById("nela-rest-grid");
+          var nameEl = card ? card.querySelector(".option-name") : null;
+          var mealName = nameEl ? nameEl.textContent.replace(/\s+/g, " ").trim() : "";
           fetch("/api/nela/favourite", {
             method: "POST",
             headers: { "Content-Type": "application/json" },
-            body: JSON.stringify({ simple_product_id: id, favourite: next }),
+            body: JSON.stringify({ simple_product_id: id, meal_name: mealName, favourite: next }),
           })
             .then(function (r) {
               if (!r.ok) return;

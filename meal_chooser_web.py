@@ -8,9 +8,12 @@ import hashlib
 import json
 import logging
 import os
+import re
 import sys
 import time
+import unicodedata
 from collections import defaultdict
+from difflib import SequenceMatcher
 from concurrent.futures import ThreadPoolExecutor
 from contextlib import contextmanager
 from datetime import datetime, timedelta
@@ -206,29 +209,125 @@ def polish_weekday_and_display_date(date_str: str) -> tuple[str, str] | None:
     return _PL_WEEKDAYS[day.weekday()], day.strftime("%d.%m.%Y")
 
 
+def nela_livekid_favourite_product_id(date_str: str) -> str:
+    """Synthetic id for LiveKid cards on nela_opcje so favourites API can target them (per viewed date)."""
+    return f"livekid:{date_str}"
+
+
 def nela_favourites_file_path() -> Path:
     return Path(__file__).resolve().parent / ".data" / "nela_meal_favourites.json"
 
 
-def load_nela_favourite_product_ids(path: Path) -> set[str]:
+# Fuzzy meal-name match: NTFY simple_product_id is usually stable for a catalog SKU, but names are
+# the durable fallback if ids rotate or duplicate. LLM matching is avoided here (latency, cost).
+_NELA_FAV_NAME_FUZZY_MIN_LEN = 14
+_NELA_FAV_NAME_FUZZY_RATIO = 0.9
+
+
+def normalize_meal_name_for_match(name: str) -> str:
+    text = unicodedata.normalize("NFKC", name or "")
+    text = text.casefold()
+    text = re.sub(r"\s+", " ", text).strip()
+    return text
+
+
+def meal_names_fuzzy_match(a: str, b: str) -> bool:
+    na = normalize_meal_name_for_match(a)
+    nb = normalize_meal_name_for_match(b)
+    if not na or not nb:
+        return False
+    if na == nb:
+        return True
+    if min(len(na), len(nb)) < _NELA_FAV_NAME_FUZZY_MIN_LEN:
+        return False
+    return SequenceMatcher(None, na, nb).ratio() >= _NELA_FAV_NAME_FUZZY_RATIO
+
+
+def load_nela_favourite_entries(path: Path) -> List[dict]:
     if not path.exists():
-        return set()
+        return []
     try:
         raw = json.loads(path.read_text(encoding="utf-8"))
     except (OSError, UnicodeDecodeError, json.JSONDecodeError):
-        return set()
-    ids = raw.get("simple_product_ids")
-    if not isinstance(ids, list):
-        return set()
-    return {str(x) for x in ids if x is not None and str(x) != ""}
+        return []
+    version = raw.get("version", 1)
+    if version == 1:
+        ids = raw.get("simple_product_ids")
+        if not isinstance(ids, list):
+            return []
+        return [
+            {"simple_product_id": str(x), "meal_name": ""}
+            for x in ids
+            if x is not None and str(x).strip() != ""
+        ]
+    favourites = raw.get("favourites")
+    if not isinstance(favourites, list):
+        return []
+    out: List[dict] = []
+    for item in favourites:
+        if not isinstance(item, dict):
+            continue
+        pid_raw = item.get("simple_product_id")
+        pid = str(pid_raw).strip() if pid_raw is not None else ""
+        mname = str(item.get("meal_name") or "").strip()
+        if pid or mname:
+            out.append({"simple_product_id": pid, "meal_name": mname})
+    return out
 
 
-def save_nela_favourite_product_ids(path: Path, ids: set[str]) -> None:
+def save_nela_favourite_entries(path: Path, entries: List[dict]) -> None:
     path.parent.mkdir(parents=True, exist_ok=True)
-    payload = {"version": 1, "simple_product_ids": sorted(ids)}
+    payload = {
+        "version": 2,
+        "favourites": sorted(
+            entries,
+            key=lambda e: (e.get("meal_name") or "", e.get("simple_product_id") or ""),
+        ),
+    }
     tmp_path = path.parent / f"{path.name}.tmp"
     tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
     tmp_path.replace(path)
+
+
+def nela_meal_favourite_matches(opt: dict, entries: List[dict]) -> bool:
+    pid = (opt.get("simple_product_id") or "").strip() or None
+    name = (opt.get("name") or "").strip()
+    for entry in entries:
+        eid = (entry.get("simple_product_id") or "").strip() or None
+        ename = (entry.get("meal_name") or "").strip()
+        if pid and eid and pid == eid:
+            return True
+        if name and ename and meal_names_fuzzy_match(ename, name):
+            return True
+    return False
+
+
+def add_nela_favourite_entry(entries: List[dict], *, product_id: str, meal_name: str) -> None:
+    product_id = (product_id or "").strip()
+    meal_name = (meal_name or "").strip()
+    entries[:] = [
+        e
+        for e in entries
+        if (e.get("simple_product_id") or "").strip() != product_id
+        and not (meal_name and meal_names_fuzzy_match(e.get("meal_name") or "", meal_name))
+    ]
+    entries.append({"simple_product_id": product_id, "meal_name": meal_name})
+
+
+def remove_nela_favourite_entry(entries: List[dict], *, product_id: str, meal_name: str) -> None:
+    product_id = (product_id or "").strip()
+    meal_name = (meal_name or "").strip()
+    before = len(entries)
+    entries[:] = [e for e in entries if (e.get("simple_product_id") or "").strip() != product_id]
+    if len(entries) < before:
+        return
+    if meal_name:
+        entries[:] = [e for e in entries if not meal_names_fuzzy_match(e.get("meal_name") or "", meal_name)]
+
+
+def load_nela_favourite_product_ids(path: Path) -> set[str]:
+    """Backward-compatible helper: ids only (tests / diagnostics)."""
+    return {e["simple_product_id"] for e in load_nela_favourite_entries(path) if e.get("simple_product_id")}
 
 
 def livekid_kid_id(env_vars: Dict[str, str]) -> int | None:
@@ -935,7 +1034,7 @@ def create_app(args: argparse.Namespace, *, nela_favourites_path: Path | None = 
                             "protein": row.get("protein"),
                             "fiber": row.get("fiber"),
                             "imageUrl": f"/images/{image_id}" if image_id else None,
-                            "selected": bool(row.get("selected")),
+                            "selected": False,
                             "simple_product_id": str(product_id) if product_id is not None else None,
                             "livekid": False,
                         }
@@ -955,7 +1054,7 @@ def create_app(args: argparse.Namespace, *, nela_favourites_path: Path | None = 
                             "fiber": None,
                             "imageUrl": None,
                             "selected": False,
-                            "simple_product_id": None,
+                            "simple_product_id": nela_livekid_favourite_product_id(current_date),
                             "livekid": True,
                         },
                     )
@@ -963,13 +1062,15 @@ def create_app(args: argparse.Namespace, *, nela_favourites_path: Path | None = 
                 pass
 
         with nela_favourites_lock:
-            favourite_ids = load_nela_favourite_product_ids(favourites_path)
+            favourite_entries = load_nela_favourite_entries(favourites_path)
+
+        for opt in options:
+            opt["is_favourite"] = nela_meal_favourite_matches(opt, favourite_entries)
 
         favourite_options: List[dict] = []
         other_options: List[dict] = []
         for opt in options:
-            pid = opt.get("simple_product_id")
-            if pid and pid in favourite_ids:
+            if opt.get("is_favourite"):
                 favourite_options.append(opt)
             else:
                 other_options.append(opt)
@@ -987,7 +1088,6 @@ def create_app(args: argparse.Namespace, *, nela_favourites_path: Path | None = 
             favourite_options=favourite_options,
             other_options=other_options,
             error_message=error_message,
-            favourite_ids=favourite_ids,
             current_date=current_date,
             weekday_label=weekday_label,
             date_display=date_display,
@@ -1127,17 +1227,24 @@ def create_app(args: argparse.Namespace, *, nela_favourites_path: Path | None = 
         if raw_id is None or raw_id == "":
             return jsonify({"error": "simple_product_id is required."}), 400
         product_id = str(raw_id)
+        meal_name = str(payload.get("meal_name") or "").strip()
         favourite = payload.get("favourite")
         if not isinstance(favourite, bool):
             return jsonify({"error": "favourite must be a boolean."}), 400
         with nela_favourites_lock:
-            ids = load_nela_favourite_product_ids(favourites_path)
+            entries = load_nela_favourite_entries(favourites_path)
             if favourite:
-                ids.add(product_id)
+                add_nela_favourite_entry(entries, product_id=product_id, meal_name=meal_name)
             else:
-                ids.discard(product_id)
-            save_nela_favourite_product_ids(favourites_path, ids)
-        return jsonify({"simple_product_id": product_id, "favourite": favourite})
+                remove_nela_favourite_entry(entries, product_id=product_id, meal_name=meal_name)
+            save_nela_favourite_entries(favourites_path, entries)
+        return jsonify(
+            {
+                "simple_product_id": product_id,
+                "meal_name": meal_name,
+                "favourite": favourite,
+            }
+        )
 
     @app.get("/images/<path:image_id>")
     def meal_image(image_id: str) -> Response:
