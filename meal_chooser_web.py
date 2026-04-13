@@ -909,33 +909,58 @@ def create_app(args: argparse.Namespace, *, nela_favourites_path: Path | None = 
         error_message = None
         options: List[dict] = []
         diet_name_slex = "Slex"
+
         try:
             validate_date(current_date)
-            context = fetch_delivery_context(
-                date=current_date,
-                diet_name=diet_name_slex,
-                config_path=args.config,
-                explicit_cookie_str=args.cookies,
-            )
-            with cache_lock:
-                context_cache[current_date] = context
-            _, rows = obiad_meal_from_rows_by_meal(context["rows_by_meal"])
-            for row in rows:
-                image_id = row.get("image_id")
-                product_id = row.get("simple_product_id")
-                options.append(
-                    {
-                        "name": row.get("name") or "",
-                        "calorific": row.get("calorific"),
-                        "protein": row.get("protein"),
-                        "fiber": row.get("fiber"),
-                        "imageUrl": f"/images/{image_id}" if image_id else None,
-                        "selected": bool(row.get("selected")),
-                        "simple_product_id": str(product_id) if product_id is not None else None,
-                    }
-                )
-        except Exception as exc:  # pylint: disable=broad-except
+        except ValueError as exc:
             error_message = str(exc)
+        else:
+            try:
+                context = fetch_delivery_context(
+                    date=current_date,
+                    diet_name=diet_name_slex,
+                    config_path=args.config,
+                    explicit_cookie_str=args.cookies,
+                )
+                with cache_lock:
+                    context_cache[current_date] = context
+                _, rows = obiad_meal_from_rows_by_meal(context["rows_by_meal"])
+                for row in rows:
+                    image_id = row.get("image_id")
+                    product_id = row.get("simple_product_id")
+                    options.append(
+                        {
+                            "name": row.get("name") or "",
+                            "calorific": row.get("calorific"),
+                            "protein": row.get("protein"),
+                            "fiber": row.get("fiber"),
+                            "imageUrl": f"/images/{image_id}" if image_id else None,
+                            "selected": bool(row.get("selected")),
+                            "simple_product_id": str(product_id) if product_id is not None else None,
+                            "livekid": False,
+                        }
+                    )
+            except Exception as exc:  # pylint: disable=broad-except
+                error_message = str(exc)
+
+            try:
+                livekid_line = livekid_meal_name_for_day(current_date, None)
+                if livekid_line and livekid_line != "Brak Menu":
+                    options.insert(
+                        0,
+                        {
+                            "name": livekid_line,
+                            "calorific": None,
+                            "protein": None,
+                            "fiber": None,
+                            "imageUrl": None,
+                            "selected": False,
+                            "simple_product_id": None,
+                            "livekid": True,
+                        },
+                    )
+            except Exception:  # pylint: disable=broad-except
+                pass
 
         with nela_favourites_lock:
             favourite_ids = load_nela_favourite_product_ids(favourites_path)

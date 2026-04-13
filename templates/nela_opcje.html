@@ -107,6 +107,54 @@
       box-shadow: 0 0 0 1px rgba(122, 162, 255, 0.25);
     }
 
+    .option-card.livekid-option {
+      border-color: rgba(120, 200, 180, 0.45);
+      box-shadow: 0 0 0 1px rgba(120, 200, 180, 0.12);
+    }
+
+    .livekid-photo-placeholder {
+      width: 100%;
+      height: 100%;
+      min-height: 100%;
+      display: flex;
+      flex-direction: column;
+      align-items: center;
+      justify-content: center;
+      gap: 10px;
+      padding: 16px;
+      text-align: center;
+      background: linear-gradient(155deg, #152028 0%, #1e2a38 42%, #261c30 100%);
+      color: var(--muted);
+    }
+
+    .livekid-photo-placeholder svg {
+      width: 48px;
+      height: 48px;
+      opacity: 0.85;
+      color: rgba(130, 200, 185, 0.9);
+    }
+
+    .livekid-photo-placeholder span {
+      font-size: 0.8rem;
+      font-weight: 700;
+      letter-spacing: 0.06em;
+      text-transform: uppercase;
+      color: rgba(160, 210, 195, 0.95);
+    }
+
+    .livekid-pill {
+      display: inline-flex;
+      align-self: start;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(120, 200, 180, 0.16);
+      color: rgba(150, 220, 200, 0.98);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.05em;
+    }
+
     .favourite-btn {
       position: absolute;
       top: 10px;
@@ -282,7 +330,7 @@
 </head>
 <body>
 {% macro option_card(opt, fav_ids) %}
-      <article class="option-card {{ 'selected' if opt.selected else '' }}">
+      <article class="option-card{{ ' livekid-option' if opt.livekid else '' }}{{ ' selected' if opt.selected else '' }}">
         {% if opt.simple_product_id %}
         <button
           type="button"
@@ -303,12 +351,22 @@
         <div class="option-image-wrap">
           {% if opt.imageUrl %}
           <img class="option-image" src="{{ opt.imageUrl }}" alt="{{ opt.name }}" loading="lazy">
+          {% elif opt.livekid %}
+          <div class="livekid-photo-placeholder" role="img" aria-label="Brak zdjęcia — jadłospis przedszkola LiveKid">
+            <svg viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="1.6" aria-hidden="true">
+              <path d="M12 3c-1.5 3-4 4.5-4 8a4 4 0 008 0c0-3.5-2.5-5-4-8z" stroke-linejoin="round"/>
+              <path d="M8 14h8M9 18h6" stroke-linecap="round"/>
+            </svg>
+            <span>LiveKid</span>
+          </div>
           {% else %}
           <span class="option-meta">Brak zdjęcia</span>
           {% endif %}
         </div>
         <div class="option-body">
-          {% if opt.selected %}
+          {% if opt.livekid %}
+          <span class="livekid-pill">LiveKid</span>
+          {% elif opt.selected %}
           <span class="selected-pill">Wybrane</span>
           {% endif %}
           <div class="option-name">{{ opt.name }}</div>

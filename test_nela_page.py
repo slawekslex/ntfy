@@ -202,6 +202,21 @@ class NelaPageLogicTestCase(unittest.TestCase):
             )
         )
 
+    def test_livekid_meal_name_brak_menu_when_zupa_and_drugie_empty(self) -> None:
+        self.assertEqual(
+            livekid_meal_name_from_payloads(
+                make_livekid_presence_payload("Obiad"),
+                {"zupa": "", "drugie": ""},
+            ),
+            "Brak Menu",
+        )
+
+    def test_livekid_meal_name_single_course_for_nela_opcje_line(self) -> None:
+        self.assertEqual(
+            livekid_meal_name_from_payloads(make_livekid_presence_payload("Obiad"), {"zupa": "Rosół"}),
+            "Rosół",
+        )
+
     def test_livekid_kid_id_reads_kid_from_bearer_token(self) -> None:
         env_vars = {"LIVEKID_BEARER_TOKEN": make_livekid_token(kid=76591247)}
         previous_token = os.environ.pop("LIVEKID_BEARER_TOKEN", None)
