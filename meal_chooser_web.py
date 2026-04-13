@@ -380,6 +380,12 @@ def format_livekid_menu(menu_payload: dict | None) -> str:
     return " | ".join(parts) if parts else "Brak Menu"
 
 
+def livekid_opcje_menu_line(menu_payload: dict | None) -> str | None:
+    """Menu text for nela_opcje when LiveKid PDF/cache has dishes; does not use presence/Obiad selection."""
+    line = format_livekid_menu(menu_payload)
+    return None if line == "Brak Menu" else line
+
+
 def livekid_meal_name_from_payloads(presence_payload: dict | None, menu_payload: dict | None) -> str | None:
     if not livekid_has_obiad(presence_payload):
         return None
@@ -1040,8 +1046,9 @@ def create_app(args: argparse.Namespace, *, nela_favourites_path: Path | None = 
                 error_message = str(exc)
 
             try:
-                livekid_line = livekid_meal_name_for_day(current_date, None)
-                if livekid_line and livekid_line != "Brak Menu":
+                menu_payload = fetch_livekid_menu(current_date)
+                livekid_line = livekid_opcje_menu_line(menu_payload)
+                if livekid_line:
                     options.insert(
                         0,
                         {

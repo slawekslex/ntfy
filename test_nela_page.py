@@ -12,6 +12,7 @@ from meal_chooser_web import (
     create_app,
     format_livekid_menu,
     livekid_has_obiad,
+    livekid_opcje_menu_line,
     livekid_kid_id,
     livekid_meal_name_from_payloads,
     load_nela_favourite_entries,
@@ -190,6 +191,17 @@ class NelaPageLogicTestCase(unittest.TestCase):
         self.assertEqual(
             format_livekid_menu({"zupa": "Rosół", "drugie": "Kotlet z ziemniakami"}),
             "Rosół | Kotlet z ziemniakami",
+        )
+
+    def test_livekid_opcje_menu_line_none_when_missing_or_empty(self) -> None:
+        self.assertIsNone(livekid_opcje_menu_line(None))
+        self.assertIsNone(livekid_opcje_menu_line({"status": "missing"}))
+        self.assertIsNone(livekid_opcje_menu_line({"zupa": "", "drugie": ""}))
+
+    def test_livekid_opcje_menu_line_returns_formatted_menu(self) -> None:
+        self.assertEqual(
+            livekid_opcje_menu_line({"zupa": "Rosół", "drugie": "Kotlet"}),
+            "Rosół | Kotlet",
         )
 
     def test_livekid_meal_name_from_payloads_returns_brak_menu_when_presence_has_obiad_but_menu_missing(self) -> None:
