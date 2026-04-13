@@ -25,9 +25,10 @@
     }
 
     .page {
+      --page-padding-x: 24px;
       max-width: 1200px;
       margin: 0 auto;
-      padding: 24px;
+      padding: 24px var(--page-padding-x);
     }
 
     .date-header {
@@ -224,6 +225,58 @@
 
     #nela-fav-section[hidden] {
       display: none !important;
+    }
+
+    /* Mobile: horizontal swipe carousel per section */
+    @media (max-width: 640px) {
+      .page {
+        --page-padding-x: 16px;
+        padding: 16px var(--page-padding-x) 20px;
+      }
+
+      .options-section .options-grid {
+        display: flex;
+        flex-direction: row;
+        flex-wrap: nowrap;
+        gap: 14px;
+        overflow-x: auto;
+        overflow-y: hidden;
+        scroll-snap-type: x mandatory;
+        scroll-padding-inline: var(--page-padding-x);
+        -webkit-overflow-scrolling: touch;
+        overscroll-behavior-x: contain;
+        margin-left: calc(-1 * var(--page-padding-x));
+        margin-right: calc(-1 * var(--page-padding-x));
+        padding-left: var(--page-padding-x);
+        padding-right: var(--page-padding-x);
+        padding-bottom: 6px;
+        grid-template-columns: unset;
+        scrollbar-width: thin;
+        scrollbar-color: var(--border) transparent;
+      }
+
+      .options-section .options-grid::-webkit-scrollbar {
+        height: 5px;
+      }
+
+      .options-section .options-grid::-webkit-scrollbar-thumb {
+        background: var(--border);
+        border-radius: 999px;
+      }
+
+      .options-section .option-card {
+        flex: 0 0 min(86vw, 300px);
+        width: min(86vw, 300px);
+        max-width: none;
+        scroll-snap-align: start;
+        scroll-snap-stop: normal;
+      }
+    }
+
+    @media (max-width: 640px) and (prefers-reduced-motion: reduce) {
+      .options-section .options-grid {
+        scroll-snap-type: x proximity;
+      }
     }
   </style>
 </head>
