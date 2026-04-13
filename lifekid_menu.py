@@ -3,7 +3,9 @@ from __future__ import annotations
 import base64
 from contextlib import contextmanager
 import fcntl
+import hashlib
 import json
+import logging
 import os
 import sys
 import time
@@ -29,9 +31,21 @@ DEFAULT_DATA_DIR = ".data"
 DEFAULT_OUTPUT_DIR = "livekid_menus"
 CACHE_FILE = ".livekid_token_cache.json"
 MENU_CACHE_FILE = ".livekid_menu_cache.json"
+PDF_PARSE_CACHE_FILE = ".livekid_pdf_parse_cache.json"
 DEFAULT_OPENAI_MODEL = "gpt-5.4-mini"
 MENU_MISSING_STATUS = "missing"
 MISSING_MENU_TTL_SECONDS = 12 * 60 * 60
+
+_log = logging.getLogger(__name__)
+
+
+def _info(message: str, *args: Any) -> None:
+    if _log.isEnabledFor(logging.INFO):
+        _log.info(message, *args)
+        return
+    if args:
+        message = message % args
+    print(f"[INFO] {message}")
 
 
 class LiveKidMenuError(RuntimeError):
@@ -107,6 +121,16 @@ def resolve_cache_path(path: str | os.PathLike[str] | None, *, default_name: str
 
 def lock_path_for(target: Path) -> Path:
     return target.parent / f"{target.name}.lock"
+
+
+def menu_asset_cache_key(menu: LiveKidMenuFile) -> str:
+    # LiveKid menu_id is stable for one menu asset even when file URLs are signed/rotating.
+    return f"menu_id:{menu.menu_id}"
+
+
+def menu_asset_lock_path(asset_key: str) -> Path:
+    key_hash = hashlib.sha256(asset_key.encode("utf-8")).hexdigest()[:16]
+    return resolve_data_dir() / ".locks" / f"menu-asset-{key_hash}.lock"
 
 
 @contextmanager
@@ -222,6 +246,58 @@ def save_menu_cache(cache: dict[str, Any], path: str | os.PathLike[str] | None =
         write_json_atomic(cache_path, cache)
 
 
+def load_pdf_parse_cache(path: str | os.PathLike[str] | None = None) -> dict[str, Any]:
+    cache_path = resolve_cache_path(path, default_name=PDF_PARSE_CACHE_FILE)
+    if not cache_path.exists():
+        return {}
+    try:
+        payload = json.loads(cache_path.read_text(encoding="utf-8"))
+    except Exception:  # pylint: disable=broad-except
+        return {}
+    if isinstance(payload, dict):
+        return payload
+    return {}
+
+
+def _normalize_parsed_menus(value: Any) -> dict[str, dict[str, str]] | None:
+    if not isinstance(value, dict):
+        return None
+    normalized: dict[str, dict[str, str]] = {}
+    for day, menu in value.items():
+        if not isinstance(day, str) or not isinstance(menu, dict):
+            return None
+        zupa = menu.get("zupa")
+        drugie = menu.get("drugie")
+        if not isinstance(zupa, str) or not isinstance(drugie, str):
+            return None
+        normalized[day] = {"zupa": zupa, "drugie": drugie}
+    return normalized
+
+
+def _read_cached_pdf_parse(asset_key: str, *, path: str | os.PathLike[str] | None = None) -> dict[str, dict[str, str]] | None:
+    cache_path = resolve_cache_path(path, default_name=PDF_PARSE_CACHE_FILE)
+    _info("[CACHE][PDF_PARSE] checking key=%s at %s", asset_key, cache_path)
+    with file_lock(lock_path_for(cache_path)):
+        cache = load_pdf_parse_cache(cache_path)
+        parsed = _normalize_parsed_menus(cache.get(asset_key))
+        _info("[CACHE][PDF_PARSE] %s for key=%s", "HIT" if parsed is not None else "MISS", asset_key)
+        return parsed
+
+
+def _cache_pdf_parse_value(
+    asset_key: str,
+    parsed_menus: dict[str, dict[str, str]],
+    *,
+    path: str | os.PathLike[str] | None = None,
+) -> None:
+    cache_path = resolve_cache_path(path, default_name=PDF_PARSE_CACHE_FILE)
+    _info("[CACHE][PDF_PARSE] storing key=%s at %s (days=%d)", asset_key, cache_path, len(parsed_menus))
+    with file_lock(lock_path_for(cache_path)):
+        cache = load_pdf_parse_cache(cache_path)
+        cache[asset_key] = parsed_menus
+        write_json_atomic(cache_path, cache)
+
+
 def missing_menu_marker() -> dict[str, str]:
     return {"status": MENU_MISSING_STATUS}
 
@@ -240,6 +316,7 @@ def _cache_menu_value(
     path: str | os.PathLike[str] | None = None,
 ) -> None:
     cache_path = resolve_cache_path(path, default_name=MENU_CACHE_FILE)
+    _info("[CACHE][DAY] storing day=%s at %s", day, cache_path)
     with file_lock(lock_path_for(cache_path)):
         cache = load_menu_cache(cache_path)
         cache[day] = value
@@ -248,23 +325,29 @@ def _cache_menu_value(
 
 def _read_cached_day(day: str, *, path: str | os.PathLike[str] | None = None) -> dict[str, str] | None:
     cache_path = resolve_cache_path(path, default_name=MENU_CACHE_FILE)
+    _info("[CACHE][DAY] checking day=%s at %s", day, cache_path)
     with file_lock(lock_path_for(cache_path)):
         cache = load_menu_cache(cache_path)
         value = cache.get(day)
         if not isinstance(value, dict):
+            _info("[CACHE][DAY] MISS day=%s (no dict entry)", day)
             return None
         if value.get("status") == MENU_MISSING_STATUS:
             expires_at = value.get("expires_at")
             if isinstance(expires_at, int) and expires_at > int(time.time()):
+                _info("[CACHE][DAY] HIT day=%s (missing marker valid until %s)", day, expires_at)
                 return missing_menu_marker()
             cache.pop(day, None)
             write_json_atomic(cache_path, cache)
+            _info("[CACHE][DAY] MISS day=%s (missing marker expired)", day)
             return None
         if "zupa" in value and "drugie" in value:
+            _info("[CACHE][DAY] HIT day=%s", day)
             return {
                 "zupa": str(value["zupa"]),
                 "drugie": str(value["drugie"]),
             }
+        _info("[CACHE][DAY] MISS day=%s (invalid payload shape)", day)
         return None
 
 
@@ -448,12 +531,23 @@ def download_menu_file(
     output_path = resolve_output_dir(output_dir)
     output_path.mkdir(parents=True, exist_ok=True)
 
-    filename = Path(menu.file_url.split("?", 1)[0]).name or f"livekid-menu-{menu.day}.pdf"
+    source_filename = Path(menu.file_url.split("?", 1)[0]).name or f"livekid-menu-{menu.day}.pdf"
+    asset_key = menu_asset_cache_key(menu)
+    key_hash = hashlib.sha256(asset_key.encode("utf-8")).hexdigest()[:16]
+    filename = f"{key_hash}-{source_filename}"
     destination = output_path / filename
+    _info(
+        "[PDF] menu_id=%s asset_key=%s source=%s destination=%s",
+        menu.menu_id,
+        asset_key,
+        menu.file_url,
+        destination,
+    )
     with file_lock(lock_path_for(destination)):
         if destination.exists() and destination.stat().st_size > 0:
-            print(f"[CACHE] Using existing PDF {destination}.")
+            _info("[CACHE][PDF] HIT path=%s", destination)
             return destination
+        _info("[CACHE][PDF] MISS path=%s; downloading from LiveKid", destination)
         response = api_client.request(
             "GET",
             menu.file_url,
@@ -461,6 +555,7 @@ def download_menu_file(
             timeout=60,
         )
         destination.write_bytes(response.content)
+        _info("[CACHE][PDF] STORED path=%s size=%d", destination, destination.stat().st_size)
     return destination
 
 
@@ -508,6 +603,7 @@ def parse_menu_pdf(
     pdf_file = Path(pdf_path)
     if not pdf_file.exists():
         raise LiveKidMenuError(f"PDF file does not exist: {pdf_file}")
+    _info("[LLM] parsing pdf=%s model=%s", pdf_file, model or configured_model)
     raw_file_data = base64.b64encode(pdf_file.read_bytes()).decode("ascii")
     file_data = f"data:application/pdf;base64,{raw_file_data}"
     prompt = _build_pdf_parsing_prompt()
@@ -545,6 +641,7 @@ def parse_menu_pdf(
     if not result:
         raise LiveKidMenuError("LLM parsing returned no menu entries.")
 
+    _info("[LLM] parsed %d day entries from %s", len(result), pdf_file)
     return result
 
 
@@ -559,29 +656,42 @@ def get_menu_for_day(
 ) -> dict[str, str]:
     validated_day = validate_date(day)
     day_lock = resolve_data_dir() / ".locks" / f"menu-{validated_day}.lock"
+    _info("[FLOW] get_menu_for_day start day=%s day_lock=%s", validated_day, day_lock)
     with file_lock(day_lock):
         cached_value = _read_cached_day(validated_day, path=cache_path)
         if cached_value is not None:
-            print(f"[CACHE] Using cached menu result for {validated_day}.")
+            _info("[FLOW] return from day cache for day=%s", validated_day)
             return cached_value
 
         client = LiveKidClient(explicit_token=token, env_path=env_path)
+        _info("[FLOW] day cache miss; fetching menu metadata for day=%s", validated_day)
         menu = find_menu_metadata_for_day(validated_day, client=client)
         if menu is None:
-            print(f"[CACHE] Caching missing menu marker for {validated_day} for 12 hours.")
+            _info("[FLOW] no menu metadata for day=%s; caching missing marker", validated_day)
             _cache_menu_value(validated_day, cached_missing_menu_marker(), path=cache_path)
             return missing_menu_marker()
 
-        pdf_path = download_menu_file(menu, client=client, output_dir=output_dir)
-        parsed_menus = parse_menu_pdf(pdf_path, env_path=env_path, model=model)
+        asset_key = menu_asset_cache_key(menu)
+        asset_lock = menu_asset_lock_path(asset_key)
+        _info("[FLOW] menu metadata day=%s menu_id=%s asset_key=%s asset_lock=%s", validated_day, menu.menu_id, asset_key, asset_lock)
+        with file_lock(asset_lock):
+            parsed_menus = _read_cached_pdf_parse(asset_key)
+            if parsed_menus is None:
+                _info("[FLOW] parsed asset cache MISS asset_key=%s; downloading/parsing PDF", asset_key)
+                pdf_path = download_menu_file(menu, client=client, output_dir=output_dir)
+                parsed_menus = parse_menu_pdf(pdf_path, env_path=env_path, model=model)
+                _cache_pdf_parse_value(asset_key, parsed_menus)
+            else:
+                _info("[FLOW] parsed asset cache HIT asset_key=%s", asset_key)
         for parsed_day, parsed_menu in parsed_menus.items():
             _cache_menu_value(parsed_day, parsed_menu, path=cache_path)
 
         cached_after_parse = _read_cached_day(validated_day, path=cache_path)
         if cached_after_parse is not None:
+            _info("[FLOW] return parsed day=%s after populating day cache", validated_day)
             return cached_after_parse
 
-        print(f"[CACHE] Parsed PDF did not contain {validated_day}; caching missing marker for 12 hours.")
+        _info("[FLOW] parsed PDF missing day=%s; caching missing marker", validated_day)
         _cache_menu_value(validated_day, cached_missing_menu_marker(), path=cache_path)
         return missing_menu_marker()
 

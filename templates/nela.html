@@ -155,6 +155,20 @@
       background: var(--danger-bg);
     }
 
+    tbody tr[data-href] {
+      cursor: pointer;
+      transition: background 120ms ease;
+    }
+
+    tbody tr[data-href]:hover {
+      background: rgba(122, 162, 255, 0.08);
+    }
+
+    .day-card-link {
+      text-decoration: none;
+      color: inherit;
+    }
+
     .mobile-list {
       display: none;
       gap: 12px;
@@ -168,40 +182,33 @@
       position: fixed;
       inset: 0;
       z-index: 999;
-      display: grid;
-      place-items: center;
+      display: flex;
+      align-items: center;
+      justify-content: center;
       padding: 20px;
-      background: rgba(13, 16, 22, 0.72);
-      backdrop-filter: blur(8px);
-      opacity: 0;
-      visibility: hidden;
+      background: rgba(9, 12, 18, 0.9);
       pointer-events: none;
-      transition: opacity 140ms ease;
-    }
-
-    .loading-overlay.is-visible {
-      opacity: 1;
-      visibility: visible;
-      pointer-events: all;
     }
 
     .loading-panel {
       width: min(420px, calc(100vw - 32px));
       padding: 16px;
-      border: 1px solid var(--border);
+      border: 2px solid #4d77ff;
       border-radius: 16px;
-      background: rgba(23, 26, 33, 0.96);
+      background: #111827;
       box-shadow: 0 18px 50px var(--shadow);
+      color: #edf2ff;
     }
 
     .loading-title {
       margin-bottom: 10px;
       font-weight: 700;
+      color: #edf2ff;
     }
 
     .loading-text {
       margin-bottom: 12px;
-      color: var(--muted);
+      color: #d9e3ff;
     }
 
     .loading-progress {
@@ -280,11 +287,15 @@
     }
   </style>
 </head>
-<body>
+<body class="{% if not sync_mode %}is-loading{% endif %}">
   <div class="page">
     <section class="card">
       <div class="toolbar">
-        <form method="post" action="/nela/refresh">
+        <form
+          method="post"
+          action="/nela/refresh"
+          onsubmit="(function(){var overlay=document.getElementById('loadingOverlay');var message=document.getElementById('loadingMessage');if(message){message.textContent='Odświeżanie danych...';}if(overlay){overlay.hidden=false;overlay.classList.add('is-visible');}document.body.classList.add('is-loading');})()"
+        >
           <input type="hidden" name="start" value="{{ start_date }}">
           <button class="button" type="submit">Odśwież</button>
         </form>
@@ -300,13 +311,13 @@
               <th>LiveKid</th>
             </tr>
           </thead>
-          <tbody>
+          <tbody id="nelaTableBody">
             {% for row in overview_rows %}
             {% set has_ntfy = row.ntfy_meal_name != '-' %}
             {% set has_livekid = row.livekid_meal_name != '-' %}
             {% set status_class = 'status-both' if has_ntfy and has_livekid else 'status-ntfy' if has_ntfy else 'status-livekid' if has_livekid else 'status-neither' %}
             {% set status_label = 'Both' if has_ntfy and has_livekid else 'NTFY' if has_ntfy else 'LiveKid' if has_livekid else 'Neither' %}
-            <tr class="{{ 'error-row' if row.error else '' }}">
+            <tr class="{{ 'error-row' if row.error else '' }}" data-href="/nela_opcje?date={{ row.date }}">
               <td>{{ row.date }}</td>
               <td class="muted">{{ row.day_of_week }}</td>
               <td><span class="status-badge {{ status_class }}"><span class="status-dot"></span>{{ status_label }}</span></td>
@@ -318,12 +329,13 @@
         </table>
       </div>
 
-      <div class="mobile-list">
+      <div class="mobile-list" id="nelaMobileList">
         {% for row in overview_rows %}
         {% set has_ntfy = row.ntfy_meal_name != '-' %}
         {% set has_livekid = row.livekid_meal_name != '-' %}
         {% set status_class = 'status-both' if has_ntfy and has_livekid else 'status-ntfy' if has_ntfy else 'status-livekid' if has_livekid else 'status-neither' %}
         {% set status_label = 'Both' if has_ntfy and has_livekid else 'NTFY' if has_ntfy else 'LiveKid' if has_livekid else 'Neither' %}
+        <a class="day-card-link" href="/nela_opcje?date={{ row.date }}">
         <div class="day-card {{ 'error-row' if row.error else '' }}">
           <div class="day-card-header">
             <div>
@@ -341,14 +353,21 @@
             <div class="day-card-value">{{ row.livekid_meal_name }}</div>
           </div>
         </div>
+        </a>
         {% endfor %}
       </div>
     </section>
   </div>
-  <div class="loading-overlay" id="loadingOverlay" hidden aria-live="polite" aria-busy="true">
+  <div
+    class="loading-overlay"
+    id="loadingOverlay"
+    aria-live="polite"
+    aria-busy="true"
+    style="{% if sync_mode %}display:none;{% else %}display:flex;{% endif %}"
+  >
     <div class="loading-panel">
-      <div class="loading-title">Loading</div>
-      <div class="loading-text" id="loadingMessage">Refreshing data...</div>
+      <div class="loading-title">Ładowanie danych</div>
+      <div class="loading-text" id="loadingMessage">Ściąganie nowego menu z LiveKid...</div>
       <div class="loading-progress" aria-hidden="true">
         <div class="loading-progress-bar"></div>
       </div>
@@ -358,24 +377,49 @@
     const loadingOverlay = document.getElementById("loadingOverlay");
     const loadingMessage = document.getElementById("loadingMessage");
     const refreshForm = document.querySelector('form[action="/nela/refresh"]');
+    const tableBody = document.getElementById("nelaTableBody");
+    const mobileList = document.getElementById("nelaMobileList");
+    const startDate = "{{ start_date }}";
+    const syncMode = {{ "true" if sync_mode else "false" }};
+    let loadingStageTimers = [];
+    let overviewFetchInProgress = false;
+
+    function clearLoadingStageTimers() {
+      for (const timerId of loadingStageTimers) {
+        window.clearTimeout(timerId);
+      }
+      loadingStageTimers = [];
+    }
 
     function showLoadingOverlay(message) {
+      clearLoadingStageTimers();
       loadingMessage.textContent = message;
-      loadingOverlay.hidden = false;
+      loadingOverlay.style.display = "flex";
       document.body.classList.add("is-loading");
-      requestAnimationFrame(() => {
-        loadingOverlay.classList.add("is-visible");
-      });
+    }
+
+    function showRefreshLoadingOverlay() {
+      showLoadingOverlay("Odświeżanie danych...");
+      loadingStageTimers.push(
+        window.setTimeout(() => {
+          if (loadingOverlay.style.display !== "none") {
+            loadingMessage.textContent = "Ściąganie nowego menu z LiveKid...";
+          }
+        }, 1200)
+      );
+      loadingStageTimers.push(
+        window.setTimeout(() => {
+          if (loadingOverlay.style.display !== "none") {
+            loadingMessage.textContent = "Analizowanie PDF menu (pierwsze uruchomienie może potrwać dłużej)...";
+          }
+        }, 4500)
+      );
     }
 
     function hideLoadingOverlay() {
-      loadingOverlay.classList.remove("is-visible");
+      clearLoadingStageTimers();
+      loadingOverlay.style.display = "none";
       document.body.classList.remove("is-loading");
-      window.setTimeout(() => {
-        if (!loadingOverlay.classList.contains("is-visible")) {
-          loadingOverlay.hidden = true;
-        }
-      }, 160);
     }
 
     function isInternalNavigation(link) {
@@ -386,9 +430,99 @@
       return url.origin === window.location.origin && url.href !== window.location.href;
     }
 
-    refreshForm.addEventListener("submit", () => {
-      showLoadingOverlay("Refreshing data...");
-    });
+    function statusMeta(row) {
+      const hasNtfy = row.ntfy_meal_name !== "-";
+      const hasLivekid = row.livekid_meal_name !== "-";
+      if (hasNtfy && hasLivekid) return { klass: "status-both", label: "Both" };
+      if (hasNtfy) return { klass: "status-ntfy", label: "NTFY" };
+      if (hasLivekid) return { klass: "status-livekid", label: "LiveKid" };
+      return { klass: "status-neither", label: "Neither" };
+    }
+
+    function escapeHtml(value) {
+      return String(value ?? "")
+        .replaceAll("&", "&amp;")
+        .replaceAll("<", "&lt;")
+        .replaceAll(">", "&gt;")
+        .replaceAll('"', "&quot;")
+        .replaceAll("'", "&#39;");
+    }
+
+    function renderOverviewRows(rows) {
+      if (!Array.isArray(rows)) {
+        rows = [];
+      }
+      tableBody.innerHTML = rows.map((row) => {
+        const status = statusMeta(row);
+        const errorClass = row.error ? "error-row" : "";
+        return (
+          `<tr class="${errorClass}" data-href="/nela_opcje?date=${encodeURIComponent(row.date)}">` +
+          `<td>${escapeHtml(row.date)}</td>` +
+          `<td class="muted">${escapeHtml(row.day_of_week)}</td>` +
+          `<td><span class="status-badge ${status.klass}"><span class="status-dot"></span>${status.label}</span></td>` +
+          `<td class="meal-cell">${escapeHtml(row.ntfy_meal_name)}</td>` +
+          `<td class="meal-cell">${escapeHtml(row.livekid_meal_name)}</td>` +
+          `</tr>`
+        );
+      }).join("");
+
+      mobileList.innerHTML = rows.map((row) => {
+        const status = statusMeta(row);
+        const errorClass = row.error ? "error-row" : "";
+        return (
+          `<a class="day-card-link" href="/nela_opcje?date=${encodeURIComponent(row.date)}">` +
+          `<div class="day-card ${errorClass}">` +
+          `<div class="day-card-header">` +
+          `<div><div class="day-card-date">${escapeHtml(row.date)}</div><div class="muted">${escapeHtml(row.day_of_week)}</div></div>` +
+          `<div class="status-badge ${status.klass}"><span class="status-dot"></span>${status.label}</div>` +
+          `</div>` +
+          `<div class="day-card-row"><div class="day-card-label">NTFY</div><div class="day-card-value">${escapeHtml(row.ntfy_meal_name)}</div></div>` +
+          `<div class="day-card-row"><div class="day-card-label">LiveKid</div><div class="day-card-value">${escapeHtml(row.livekid_meal_name)}</div></div>` +
+          `</div>` +
+          `</a>`
+        );
+      }).join("");
+    }
+
+    async function loadOverviewRows() {
+      if (syncMode) {
+        hideLoadingOverlay();
+        return;
+      }
+      overviewFetchInProgress = true;
+      showRefreshLoadingOverlay();
+      let loaded = false;
+      try {
+        const response = await fetch(`/api/nela/overview?start=${encodeURIComponent(startDate)}`, {
+          credentials: "same-origin",
+          cache: "no-store"
+        });
+        const contentType = response.headers.get("content-type") || "";
+        if (!response.ok || !contentType.includes("application/json")) {
+          throw new Error(`HTTP ${response.status}`);
+        }
+        const payload = await response.json();
+        renderOverviewRows(payload.overview_rows || []);
+        loaded = true;
+      } catch (error) {
+        loadingMessage.textContent = "Przeglądarka nie obsłużyła ładowania asynchronicznego. Przełączam na tryb zgodności...";
+        console.error(error);
+        window.setTimeout(() => {
+          window.location.assign(`/nela?start=${encodeURIComponent(startDate)}&sync=1`);
+        }, 250);
+      } finally {
+        overviewFetchInProgress = false;
+        if (loaded) {
+          hideLoadingOverlay();
+        }
+      }
+    }
+
+    if (refreshForm) {
+      refreshForm.addEventListener("submit", () => {
+        showRefreshLoadingOverlay();
+      });
+    }
 
     document.addEventListener("click", (event) => {
       const link = event.target.closest("a[href]");
@@ -398,7 +532,27 @@
       showLoadingOverlay("Opening page...");
     });
 
-    window.addEventListener("pageshow", hideLoadingOverlay);
+    window.addEventListener("beforeunload", () => {
+      if (loadingOverlay.style.display === "none") {
+        showLoadingOverlay("Odświeżanie danych...");
+      }
+    });
+
+    window.addEventListener("pageshow", () => {
+      if (!overviewFetchInProgress) {
+        hideLoadingOverlay();
+      }
+    });
+
+    tableBody.addEventListener("click", (event) => {
+      const row = event.target.closest("tr[data-href]");
+      if (!row) {
+        return;
+      }
+      window.location.assign(row.dataset.href);
+    });
+
+    loadOverviewRows();
   </script>
 </body>
 </html>

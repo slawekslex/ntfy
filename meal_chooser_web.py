@@ -6,14 +6,18 @@ import argparse
 import base64
 import hashlib
 import json
+import logging
 import os
-import subprocess
+import sys
+import time
+from collections import defaultdict
 from concurrent.futures import ThreadPoolExecutor
+from contextlib import contextmanager
 from datetime import datetime, timedelta
 from pathlib import Path
-from threading import Lock
+from threading import Lock, local
+from typing import Dict, Iterator, List, Tuple
 from urllib.parse import urlparse
-from typing import Dict, List, Tuple
 
 import requests
 
@@ -35,6 +39,75 @@ from ntfy_meals_lib import (
     read_caps_from_config,
     validate_date,
 )
+
+_log = logging.getLogger(__name__)
+
+
+def _resolve_log_level() -> int:
+    raw_level = (os.environ.get("MEAL_CHOOSER_LOG_LEVEL") or "INFO").strip().upper()
+    return getattr(logging, raw_level, logging.INFO)
+
+
+def _configure_logging() -> int:
+    """Configure app logging so INFO progress logs are visible by default."""
+    level = _resolve_log_level()
+    root_logger = logging.getLogger()
+    if not root_logger.handlers:
+        logging.basicConfig(
+            level=level,
+            format="%(asctime)s %(levelname)s [%(name)s] %(message)s",
+        )
+    else:
+        root_logger.setLevel(level)
+    logging.getLogger(__name__).setLevel(level)
+    logging.getLogger("lifekid_menu").setLevel(level)
+    return level
+
+
+def _timing_enabled() -> bool:
+    return (os.environ.get("MEAL_CHOOSER_TIMING") or "").strip().lower() in ("1", "true", "yes")
+
+
+class TimingAgg:
+    """Thread-safe per-request timing totals (enable with MEAL_CHOOSER_TIMING=1)."""
+
+    __slots__ = ("_lock", "_totals", "_counts")
+
+    def __init__(self) -> None:
+        self._lock = Lock()
+        self._totals: dict[str, float] = defaultdict(float)
+        self._counts: dict[str, int] = defaultdict(int)
+
+    def add(self, label: str, seconds: float) -> None:
+        with self._lock:
+            self._totals[label] += seconds
+            self._counts[label] += 1
+
+    def emit(self, *, prefix: str) -> None:
+        if not self._totals:
+            return
+        lines = sorted(self._totals.items(), key=lambda kv: kv[1], reverse=True)
+        parts = [f"{lab} {sec * 1000:.1f}ms total (n={self._counts[lab]})" for lab, sec in lines]
+        line = (
+            f"{prefix}: {' | '.join(parts)} "
+            "(per-label totals sum worker time; compare nela.route.thread_pool for wall clock)"
+        )
+        if _log.isEnabledFor(logging.INFO):
+            _log.info("%s", line)
+        else:
+            print(line, file=sys.stderr, flush=True)
+
+
+@contextmanager
+def _time_block(label: str, agg: TimingAgg | None) -> Iterator[None]:
+    if agg is None:
+        yield
+        return
+    start = time.perf_counter()
+    try:
+        yield
+    finally:
+        agg.add(label, time.perf_counter() - start)
 
 
 def parse_args() -> argparse.Namespace:
@@ -106,6 +179,58 @@ def select_first_meal_name(delivery_payload: dict | None) -> str | None:
     return None
 
 
+def obiad_meal_from_rows_by_meal(rows_by_meal: Dict[str, List[dict]]) -> tuple[str | None, List[dict]]:
+    for meal_label, rows in rows_by_meal.items():
+        if meal_label.lower().startswith("obiad") and rows:
+            return meal_label, rows
+    return None, []
+
+
+_PL_WEEKDAYS = (
+    "poniedziałek",
+    "wtorek",
+    "środa",
+    "czwartek",
+    "piątek",
+    "sobota",
+    "niedziela",
+)
+
+
+def polish_weekday_and_display_date(date_str: str) -> tuple[str, str] | None:
+    try:
+        validate_date(date_str)
+    except ValueError:
+        return None
+    day = datetime.strptime(date_str, "%Y-%m-%d").date()
+    return _PL_WEEKDAYS[day.weekday()], day.strftime("%d.%m.%Y")
+
+
+def nela_favourites_file_path() -> Path:
+    return Path(__file__).resolve().parent / ".data" / "nela_meal_favourites.json"
+
+
+def load_nela_favourite_product_ids(path: Path) -> set[str]:
+    if not path.exists():
+        return set()
+    try:
+        raw = json.loads(path.read_text(encoding="utf-8"))
+    except (OSError, UnicodeDecodeError, json.JSONDecodeError):
+        return set()
+    ids = raw.get("simple_product_ids")
+    if not isinstance(ids, list):
+        return set()
+    return {str(x) for x in ids if x is not None and str(x) != ""}
+
+
+def save_nela_favourite_product_ids(path: Path, ids: set[str]) -> None:
+    path.parent.mkdir(parents=True, exist_ok=True)
+    payload = {"version": 1, "simple_product_ids": sorted(ids)}
+    tmp_path = path.parent / f"{path.name}.tmp"
+    tmp_path.write_text(json.dumps(payload, ensure_ascii=False, indent=2) + "\n", encoding="utf-8")
+    tmp_path.replace(path)
+
+
 def livekid_kid_id(env_vars: Dict[str, str]) -> int | None:
     token = os.getenv("LIVEKID_BEARER_TOKEN") or env_vars.get("LIVEKID_BEARER_TOKEN")
     if not token:
@@ -157,8 +282,12 @@ def livekid_meal_name_from_payloads(presence_payload: dict | None, menu_payload:
     return format_livekid_menu(menu_payload)
 
 
-def create_app(args: argparse.Namespace) -> Flask:
+def create_app(args: argparse.Namespace, *, nela_favourites_path: Path | None = None) -> Flask:
     app = Flask(__name__)
+    configured_level = _configure_logging()
+    app.logger.setLevel(configured_level)
+    _log.info("Logging configured at level=%s", logging.getLevelName(configured_level))
+    favourites_path = nela_favourites_path or nela_favourites_file_path()
     env_vars = load_env_file()
     auth_password = os.getenv("APP_PASSWORD") or env_vars.get("APP_PASSWORD") or os.getenv("PASSWORD") or env_vars.get("PASSWORD")
     if not auth_password:
@@ -176,6 +305,8 @@ def create_app(args: argparse.Namespace) -> Flask:
     livekid_cache: Dict[str, str | None] = {}
     ntfy_nela_cache: Dict[str, str] = {}
     cache_lock = Lock()
+    nela_favourites_lock = Lock()
+    nela_worker_state = local()
 
     def requested_path() -> str:
         query = request.query_string.decode("utf-8")
@@ -229,15 +360,13 @@ def create_app(args: argparse.Namespace) -> Flask:
         return redirect(url_for("login"))
 
     def clear_all_caches() -> None:
+        _log.info("NELA flow: clearing in-memory caches (keeping LiveKid disk caches).")
         with cache_lock:
             image_cache.clear()
             chooser_cache.clear()
             context_cache.clear()
             livekid_cache.clear()
             ntfy_nela_cache.clear()
-        livekid_menu_cache_path = Path(__file__).resolve().parent / ".data" / ".livekid_menu_cache.json"
-        if livekid_menu_cache_path.exists():
-            livekid_menu_cache_path.unlink()
 
     def with_image_urls(chooser_payload: dict) -> dict:
         for meal in chooser_payload["meals"]:
@@ -343,45 +472,30 @@ def create_app(args: argparse.Namespace) -> Flask:
         return response.json()
 
     def fetch_livekid_menu(date_str: str) -> dict | None:
-        try:
-            from lifekid_menu import get_menu_for_day
-        except ImportError:
-            venv_python = Path(__file__).resolve().parent / ".venv" / "bin" / "python"
-            if not venv_python.exists():
-                raise
-            marker = "__LIVEKID_JSON__"
-            script = (
-                "import json\n"
-                "from lifekid_menu import get_menu_for_day\n"
-                "payload = get_menu_for_day("
-                f"'{date_str}'"
-                ", env_path='.env')\n"
-                f"print('{marker}')\n"
-                "print(json.dumps(payload, ensure_ascii=False))\n"
-            )
-            result = subprocess.run(
-                [str(venv_python), "-c", script],
-                check=True,
-                capture_output=True,
-                text=True,
-                cwd=Path(__file__).resolve().parent,
-            )
-            marker_index = result.stdout.rfind(f"{marker}\n")
-            if marker_index == -1:
-                raise ValueError("Could not parse LiveKid menu output.")
-            return json.loads(result.stdout[marker_index + len(marker) + 1 :].strip())
+        from lifekid_menu import get_menu_for_day
+
         return get_menu_for_day(date_str, env_path=".env")
 
-    def livekid_meal_name_for_day(date_str: str) -> str | None:
+    def livekid_meal_name_for_day(
+        date_str: str,
+        timing_agg: TimingAgg | None,
+        *,
+        prefetched_presence: dict[str, dict | None] | None = None,
+    ) -> str | None:
         with cache_lock:
             if date_str in livekid_cache:
                 return livekid_cache[date_str]
-        presence_payload = fetch_livekid_presence(date_str)
+        if prefetched_presence is not None and date_str in prefetched_presence:
+            presence_payload = prefetched_presence[date_str]
+        else:
+            with _time_block("livekid.fetch_presence", timing_agg):
+                presence_payload = fetch_livekid_presence(date_str)
         if not livekid_has_obiad(presence_payload):
             with cache_lock:
                 livekid_cache[date_str] = None
             return None
-        menu_payload = fetch_livekid_menu(date_str)
+        with _time_block("livekid.fetch_menu", timing_agg):
+            menu_payload = fetch_livekid_menu(date_str)
         meal_name = livekid_meal_name_from_payloads(presence_payload, menu_payload)
         with cache_lock:
             livekid_cache[date_str] = meal_name
@@ -393,17 +507,27 @@ def create_app(args: argparse.Namespace) -> Flask:
         *,
         nela_delivery_diet_id: int | None,
         select_delivery_diet_id: int | None,
+        timing_agg: TimingAgg | None,
     ) -> str:
         with cache_lock:
             cached = ntfy_nela_cache.get(date_str)
         if cached is not None:
             return cached
 
-        ntfy_meal = nela_obiad_name(fetch_delivery_payload_for_diet(client, date_str, nela_delivery_diet_id))
+        with _time_block("ntfy.deliveries_nela_diet", timing_agg):
+            nela_payload = fetch_delivery_payload_for_diet(client, date_str, nela_delivery_diet_id)
+        with _time_block("ntfy.parse_nela_obiad", timing_agg):
+            ntfy_meal = nela_obiad_name(nela_payload)
+        if ntfy_meal is None and select_delivery_diet_id is not None:
+            with _time_block("ntfy.deliveries_select_diet", timing_agg):
+                select_payload = fetch_delivery_payload_for_diet(client, date_str, select_delivery_diet_id)
+            with _time_block("ntfy.parse_select_first_meal", timing_agg):
+                ntfy_meal = select_first_meal_name(select_payload)
         if ntfy_meal is None:
-            ntfy_meal = select_page_first_meal_name(fetch_delivery_payload_for_date(client, date_str))
-        if ntfy_meal is None:
-            ntfy_meal = select_first_meal_name(fetch_delivery_payload_for_diet(client, date_str, select_delivery_diet_id))
+            with _time_block("ntfy.deliveries_by_date", timing_agg):
+                date_payload = fetch_delivery_payload_for_date(client, date_str)
+            with _time_block("ntfy.parse_select_page_first", timing_agg):
+                ntfy_meal = select_page_first_meal_name(date_payload)
 
         meal_name = ntfy_meal or "-"
         with cache_lock:
@@ -416,15 +540,33 @@ def create_app(args: argparse.Namespace) -> Flask:
         nela_delivery_diet_id: int | None,
         select_delivery_diet_id: int | None,
         cookie_str: str,
+        timing_agg: TimingAgg | None,
+        livekid_presence_by_date: dict[str, dict | None] | None = None,
     ) -> dict:
+        def get_or_create_worker_ntfy_client() -> NtfyClient:
+            cached_client = getattr(nela_worker_state, "ntfy_client", None)
+            cached_cookie = getattr(nela_worker_state, "cookie_str", None)
+            if cached_client is not None and cached_cookie == cookie_str:
+                return cached_client
+            with _time_block("nela_row.ntfy_client_init", timing_agg):
+                new_client = NtfyClient(explicit_cookie_str=cookie_str)
+            with _time_block("nela_row.ensure_authenticated", timing_agg):
+                new_client.ensure_authenticated()
+            nela_worker_state.ntfy_client = new_client
+            nela_worker_state.cookie_str = cookie_str
+            return new_client
+
         ntfy_meal_name = "-"
         livekid_meal_name = "-"
         errors = []
         try:
-            client = NtfyClient(explicit_cookie_str=cookie_str)
-            client.ensure_authenticated()
+            client = get_or_create_worker_ntfy_client()
             try:
-                livekid_meal = livekid_meal_name_for_day(date_str)
+                livekid_meal = livekid_meal_name_for_day(
+                    date_str,
+                    timing_agg,
+                    prefetched_presence=livekid_presence_by_date,
+                )
                 if livekid_meal:
                     livekid_meal_name = livekid_meal
             except Exception as exc:  # pylint: disable=broad-except
@@ -436,6 +578,7 @@ def create_app(args: argparse.Namespace) -> Flask:
                     date_str,
                     nela_delivery_diet_id=nela_delivery_diet_id,
                     select_delivery_diet_id=select_delivery_diet_id,
+                    timing_agg=timing_agg,
                 )
             except Exception as exc:  # pylint: disable=broad-except
                 errors.append(f"NTFY: {exc}")
@@ -448,6 +591,154 @@ def create_app(args: argparse.Namespace) -> Flask:
             "ntfy_meal_name": ntfy_meal_name,
             "livekid_meal_name": livekid_meal_name,
             "error": "; ".join(errors) if errors else None,
+        }
+
+    def prefetch_livekid_presence_map(
+        overview_dates: list[str],
+        *,
+        max_workers: int,
+        timing_agg: TimingAgg | None,
+    ) -> dict[str, dict | None]:
+        _log.info(
+            "NELA flow: prefetching LiveKid presence for %d dates with %d workers.",
+            len(overview_dates),
+            max_workers,
+        )
+        with _time_block("nela.route.livekid_presence_prefetch", timing_agg):
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                livekid_presence_list = list(executor.map(fetch_livekid_presence, overview_dates))
+        obiad_days = sum(1 for payload in livekid_presence_list if livekid_has_obiad(payload))
+        _log.info(
+            "NELA flow: LiveKid presence prefetch done (obiad_days=%d/%d).",
+            obiad_days,
+            len(overview_dates),
+        )
+        return dict(zip(overview_dates, livekid_presence_list))
+
+    def prefetch_livekid_menus_for_obiad_days(
+        livekid_presence_map: dict[str, dict | None],
+        *,
+        timing_agg: TimingAgg | None,
+    ) -> None:
+        _log.info("NELA flow: starting serial LiveKid menu prefetch for obiad days.")
+        with _time_block("nela.route.livekid_menu_prefetch_serial", timing_agg):
+            for date_str, presence_payload in livekid_presence_map.items():
+                if not livekid_has_obiad(presence_payload):
+                    with cache_lock:
+                        livekid_cache[date_str] = None
+                    _log.info("NELA flow: skip LiveKid menu date=%s (no obiad in presence).", date_str)
+                    continue
+                try:
+                    _log.info("NELA flow: prefetching LiveKid menu for date=%s.", date_str)
+                    menu_payload = fetch_livekid_menu(date_str)
+                except Exception:  # pylint: disable=broad-except
+                    # Keep row-level error reporting behavior for failed LiveKid reads.
+                    _log.exception("NELA flow: LiveKid menu prefetch failed for date=%s.", date_str)
+                    continue
+                meal_name = livekid_meal_name_from_payloads(presence_payload, menu_payload)
+                with cache_lock:
+                    livekid_cache[date_str] = meal_name
+                _log.info("NELA flow: stored prefetched LiveKid meal for date=%s.", date_str)
+        _log.info("NELA flow: serial LiveKid menu prefetch finished.")
+
+    def build_nela_rows_parallel(
+        overview_dates: list[str],
+        *,
+        nela_delivery_diet_id: int | None,
+        select_delivery_diet_id: int | None,
+        cookie_str: str,
+        livekid_presence_map: dict[str, dict | None],
+        max_workers: int,
+        timing_agg: TimingAgg | None,
+    ) -> list[dict]:
+        _log.info(
+            "NELA flow: building rows in parallel for %d dates with %d workers.",
+            len(overview_dates),
+            max_workers,
+        )
+        with _time_block("nela.route.thread_pool", timing_agg):
+            with ThreadPoolExecutor(max_workers=max_workers) as executor:
+                rows = list(
+                    executor.map(
+                        lambda date_str: build_nela_overview_row(
+                            date_str,
+                            nela_delivery_diet_id=nela_delivery_diet_id,
+                            select_delivery_diet_id=select_delivery_diet_id,
+                            cookie_str=cookie_str,
+                            timing_agg=timing_agg,
+                            livekid_presence_by_date=livekid_presence_map,
+                        ),
+                        overview_dates,
+                    )
+                )
+        _log.info("NELA flow: row build finished.")
+        return rows
+
+    def build_nela_overview_payload(start_date: str, *, timing_agg: TimingAgg | None) -> dict:
+        start = datetime.strptime(start_date, "%Y-%m-%d").date()
+        _log.info("NELA flow: build overview payload start=%s", start_date)
+
+        with _time_block("nela.route.ntfy_client_init", timing_agg):
+            base_client = NtfyClient(explicit_cookie_str=args.cookies)
+        with _time_block("nela.route.ensure_authenticated", timing_agg):
+            base_client.ensure_authenticated()
+        with _time_block("nela.route.delivery_diets_fetch", timing_agg):
+            delivery_diets = base_client.get_data(
+                path=f"users/{base_client.user_id}/delivery-diets",
+                params={
+                    "last_delivery_day__gte": start_date,
+                    "sort": "first_delivery_day.asc",
+                    "expansions__in": "diets",
+                },
+            )
+
+        with _time_block("nela.route.choose_diet_ids", timing_agg):
+            try:
+                nela_delivery_diet_id = choose_delivery_diet_id(delivery_diets, "Nela")
+            except ValueError:
+                nela_delivery_diet_id = None
+
+            try:
+                select_delivery_diet_id = choose_delivery_diet_id(delivery_diets, "Select")
+            except ValueError:
+                select_delivery_diet_id = None
+        _log.info(
+            "NELA flow: resolved delivery diet ids nela=%s select=%s",
+            nela_delivery_diet_id,
+            select_delivery_diet_id,
+        )
+
+        overview_dates = [
+            day.isoformat()
+            for offset in range(21)
+            if (day := start + timedelta(days=offset)).weekday() < 5
+        ]
+        pool_workers = min(8, len(overview_dates)) if overview_dates else 1
+        livekid_presence_map = prefetch_livekid_presence_map(
+            overview_dates,
+            max_workers=pool_workers,
+            timing_agg=timing_agg,
+        )
+        prefetch_livekid_menus_for_obiad_days(
+            livekid_presence_map,
+            timing_agg=timing_agg,
+        )
+        rows = build_nela_rows_parallel(
+            overview_dates,
+            nela_delivery_diet_id=nela_delivery_diet_id,
+            select_delivery_diet_id=select_delivery_diet_id,
+            cookie_str=base_client.cookie_str or "",
+            livekid_presence_map=livekid_presence_map,
+            max_workers=pool_workers,
+            timing_agg=timing_agg,
+        )
+        prev_start = (start - timedelta(days=21)).isoformat()
+        next_start = (start + timedelta(days=21)).isoformat()
+        return {
+            "start_date": start_date,
+            "prev_start": prev_start,
+            "next_start": next_start,
+            "overview_rows": rows,
         }
 
     def build_overview_row(
@@ -570,56 +861,40 @@ def create_app(args: argparse.Namespace) -> Flask:
     def nela_overview() -> str:
         start_date = request.args.get("start", args.date)
         validate_date(start_date)
-        start = datetime.strptime(start_date, "%Y-%m-%d").date()
-
-        base_client = NtfyClient(explicit_cookie_str=args.cookies)
-        base_client.ensure_authenticated()
-        delivery_diets = base_client.get_data(
-            path=f"users/{base_client.user_id}/delivery-diets",
-            params={
-                "last_delivery_day__gte": start_date,
-                "sort": "first_delivery_day.asc",
-                "expansions__in": "diets",
-            },
-        )
-
-        try:
-            nela_delivery_diet_id = choose_delivery_diet_id(delivery_diets, "Nela")
-        except ValueError:
-            nela_delivery_diet_id = None
-
-        try:
-            select_delivery_diet_id = choose_delivery_diet_id(delivery_diets, "Select")
-        except ValueError:
-            select_delivery_diet_id = None
-
-        overview_dates = [
-            day.isoformat()
-            for offset in range(21)
-            if (day := start + timedelta(days=offset)).weekday() < 5
-        ]
-        with ThreadPoolExecutor(max_workers=min(8, len(overview_dates))) as executor:
-            rows = list(
-                executor.map(
-                    lambda date_str: build_nela_overview_row(
-                        date_str,
-                        nela_delivery_diet_id=nela_delivery_diet_id,
-                        select_delivery_diet_id=select_delivery_diet_id,
-                        cookie_str=base_client.cookie_str or "",
-                    ),
-                    overview_dates,
-                )
+        sync_mode = request.args.get("sync") == "1"
+        _log.info("NELA flow: GET /nela shell start=%s sync=%s", start_date, sync_mode)
+        if sync_mode:
+            timing_agg = TimingAgg() if _timing_enabled() else None
+            payload = build_nela_overview_payload(start_date, timing_agg=timing_agg)
+            if timing_agg is not None:
+                timing_agg.emit(prefix="GET /nela?sync=1 timing (sorted by total ms)")
+            return render_template(
+                "nela.html",
+                overview_rows=payload["overview_rows"],
+                start_date=payload["start_date"],
+                prev_start=payload["prev_start"],
+                next_start=payload["next_start"],
+                sync_mode=True,
             )
-
-        prev_start = (start - timedelta(days=21)).isoformat()
-        next_start = (start + timedelta(days=21)).isoformat()
         return render_template(
             "nela.html",
-            overview_rows=rows,
+            overview_rows=[],
             start_date=start_date,
-            prev_start=prev_start,
-            next_start=next_start,
+            prev_start=start_date,
+            next_start=start_date,
+            sync_mode=False,
         )
+
+    @app.get("/api/nela/overview")
+    def nela_overview_api() -> Response:
+        start_date = request.args.get("start", args.date)
+        validate_date(start_date)
+        timing_agg = TimingAgg() if _timing_enabled() else None
+        _log.info("NELA flow: GET /api/nela/overview start=%s", start_date)
+        payload = build_nela_overview_payload(start_date, timing_agg=timing_agg)
+        if timing_agg is not None:
+            timing_agg.emit(prefix="GET /api/nela/overview timing (sorted by total ms)")
+        return jsonify(payload)
 
     @app.post("/nela/refresh")
     def nela_refresh() -> Response:
@@ -627,6 +902,72 @@ def create_app(args: argparse.Namespace) -> Flask:
         validate_date(start_date)
         clear_all_caches()
         return redirect(url_for("nela_overview", start=start_date))
+
+    @app.get("/nela_opcje")
+    def nela_opcje_view() -> str:
+        current_date = request.args.get("date", args.date)
+        error_message = None
+        options: List[dict] = []
+        diet_name_slex = "Slex"
+        try:
+            validate_date(current_date)
+            context = fetch_delivery_context(
+                date=current_date,
+                diet_name=diet_name_slex,
+                config_path=args.config,
+                explicit_cookie_str=args.cookies,
+            )
+            with cache_lock:
+                context_cache[current_date] = context
+            _, rows = obiad_meal_from_rows_by_meal(context["rows_by_meal"])
+            for row in rows:
+                image_id = row.get("image_id")
+                product_id = row.get("simple_product_id")
+                options.append(
+                    {
+                        "name": row.get("name") or "",
+                        "calorific": row.get("calorific"),
+                        "protein": row.get("protein"),
+                        "fiber": row.get("fiber"),
+                        "imageUrl": f"/images/{image_id}" if image_id else None,
+                        "selected": bool(row.get("selected")),
+                        "simple_product_id": str(product_id) if product_id is not None else None,
+                    }
+                )
+        except Exception as exc:  # pylint: disable=broad-except
+            error_message = str(exc)
+
+        with nela_favourites_lock:
+            favourite_ids = load_nela_favourite_product_ids(favourites_path)
+
+        favourite_options: List[dict] = []
+        other_options: List[dict] = []
+        for opt in options:
+            pid = opt.get("simple_product_id")
+            if pid and pid in favourite_ids:
+                favourite_options.append(opt)
+            else:
+                other_options.append(opt)
+
+        header = polish_weekday_and_display_date(current_date)
+        if header:
+            weekday_label, date_display = header
+            page_title = f"Obiad — {weekday_label.capitalize()} {date_display} (Slex)"
+        else:
+            weekday_label, date_display = None, None
+            page_title = "Obiad — opcje (Slex)"
+
+        return render_template(
+            "nela_opcje.html",
+            favourite_options=favourite_options,
+            other_options=other_options,
+            error_message=error_message,
+            favourite_ids=favourite_ids,
+            current_date=current_date,
+            weekday_label=weekday_label,
+            date_display=date_display,
+            page_title=page_title,
+        )
 
     @app.get("/day")
     def day_view() -> str:
@@ -753,6 +1094,25 @@ def create_app(args: argparse.Namespace) -> Flask:
                 "deliveryId": refreshed_context["delivery_id"],
             }
         )
+
+    @app.post("/api/nela/favourite")
+    def nela_favourite_api() -> Response:
+        payload = request.get_json(silent=True) or {}
+        raw_id = payload.get("simple_product_id")
+        if raw_id is None or raw_id == "":
+            return jsonify({"error": "simple_product_id is required."}), 400
+        product_id = str(raw_id)
+        favourite = payload.get("favourite")
+        if not isinstance(favourite, bool):
+            return jsonify({"error": "favourite must be a boolean."}), 400
+        with nela_favourites_lock:
+            ids = load_nela_favourite_product_ids(favourites_path)
+            if favourite:
+                ids.add(product_id)
+            else:
+                ids.discard(product_id)
+            save_nela_favourite_product_ids(favourites_path, ids)
+        return jsonify({"simple_product_id": product_id, "favourite": favourite})
 
     @app.get("/images/<path:image_id>")
     def meal_image(image_id: str) -> Response:

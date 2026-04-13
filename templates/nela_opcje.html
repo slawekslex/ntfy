@@ -1,0 +1,364 @@
+<!doctype html>
+<html lang="pl">
+<head>
+  <meta charset="utf-8">
+  <meta name="viewport" content="width=device-width, initial-scale=1">
+  <title>{{ page_title }}</title>
+  <style>
+    :root {
+      color-scheme: dark;
+      --panel-alt: #1d2230;
+      --text: #edf2ff;
+      --muted: #aeb8d6;
+      --accent: #7aa2ff;
+      --border: #2b3244;
+      --shadow: rgba(0, 0, 0, 0.25);
+    }
+
+    * { box-sizing: border-box; }
+
+    body {
+      margin: 0;
+      font-family: Inter, system-ui, sans-serif;
+      background: linear-gradient(180deg, #0d1016 0%, #111522 100%);
+      color: var(--text);
+    }
+
+    .page {
+      max-width: 1200px;
+      margin: 0 auto;
+      padding: 24px;
+    }
+
+    .date-header {
+      margin-bottom: 16px;
+    }
+
+    .date-header-primary {
+      margin: 0 0 4px;
+      font-size: 1.35rem;
+      font-weight: 700;
+      letter-spacing: -0.02em;
+      line-height: 1.25;
+    }
+
+    .date-header-secondary {
+      margin: 0;
+      font-size: 0.95rem;
+      color: var(--muted);
+      font-weight: 500;
+    }
+
+    .date-header-secondary.is-raw {
+      font-family: ui-monospace, monospace;
+    }
+
+    .back-row {
+      margin-bottom: 20px;
+    }
+
+    .back-button {
+      display: inline-block;
+      text-decoration: none;
+      color: var(--text);
+      background: var(--panel-alt);
+      border: 1px solid var(--border);
+      border-radius: 12px;
+      padding: 10px 14px;
+      font-weight: 600;
+      font-size: 0.92rem;
+    }
+
+    .back-button:hover {
+      border-color: rgba(122, 162, 255, 0.55);
+    }
+
+    .error {
+      color: #ffd0d0;
+      margin: 0 0 16px;
+      line-height: 1.45;
+    }
+
+    .empty {
+      color: var(--muted);
+      margin: 0 0 16px;
+    }
+
+    .options-grid {
+      display: grid;
+      grid-template-columns: repeat(auto-fill, minmax(260px, 1fr));
+      gap: 16px;
+    }
+
+    .option-card {
+      position: relative;
+      background: rgba(23, 26, 33, 0.92);
+      border: 1px solid var(--border);
+      border-radius: 16px;
+      overflow: hidden;
+      display: flex;
+      flex-direction: column;
+      box-shadow: 0 12px 36px var(--shadow);
+    }
+
+    .option-card.selected {
+      border-color: rgba(122, 162, 255, 0.65);
+      box-shadow: 0 0 0 1px rgba(122, 162, 255, 0.25);
+    }
+
+    .favourite-btn {
+      position: absolute;
+      top: 10px;
+      right: 10px;
+      z-index: 2;
+      width: 42px;
+      height: 42px;
+      border: none;
+      border-radius: 50%;
+      cursor: pointer;
+      display: flex;
+      align-items: center;
+      justify-content: center;
+      background: rgba(13, 16, 22, 0.72);
+      backdrop-filter: blur(8px);
+      color: var(--muted);
+      transition: color 0.15s ease, background 0.15s ease, transform 0.12s ease;
+    }
+
+    .favourite-btn:hover {
+      color: var(--text);
+      background: rgba(29, 34, 48, 0.9);
+    }
+
+    .favourite-btn:active {
+      transform: scale(0.94);
+    }
+
+    .favourite-btn[aria-pressed="true"] {
+      color: #ff6b9d;
+    }
+
+    .favourite-btn svg {
+      width: 22px;
+      height: 22px;
+      pointer-events: none;
+    }
+
+    .favourite-btn .heart-filled {
+      display: none;
+    }
+
+    .favourite-btn[aria-pressed="true"] .heart-outline {
+      display: none;
+    }
+
+    .favourite-btn[aria-pressed="true"] .heart-filled {
+      display: block;
+    }
+
+    .option-image-wrap {
+      aspect-ratio: 4 / 3;
+      background: var(--panel-alt);
+      display: flex;
+      align-items: center;
+      justify-content: center;
+    }
+
+    .option-image {
+      width: 100%;
+      height: 100%;
+      object-fit: cover;
+    }
+
+    .option-body {
+      padding: 14px;
+      display: grid;
+      gap: 8px;
+    }
+
+    .option-name {
+      font-weight: 600;
+      font-size: 0.98rem;
+      line-height: 1.35;
+    }
+
+    .option-meta {
+      color: var(--muted);
+      font-size: 0.85rem;
+      line-height: 1.4;
+    }
+
+    .selected-pill {
+      display: inline-flex;
+      align-self: start;
+      padding: 4px 10px;
+      border-radius: 999px;
+      background: rgba(122, 162, 255, 0.18);
+      color: var(--accent);
+      font-size: 0.78rem;
+      font-weight: 700;
+      text-transform: uppercase;
+      letter-spacing: 0.04em;
+    }
+
+    .options-section {
+      margin-bottom: 28px;
+    }
+
+    .options-section:last-child {
+      margin-bottom: 0;
+    }
+
+    .section-title {
+      margin: 0 0 12px;
+      font-size: 1.05rem;
+      font-weight: 700;
+      color: var(--text);
+      letter-spacing: -0.01em;
+    }
+
+    .section-title .section-heart {
+      color: #ff6b9d;
+      margin-right: 6px;
+    }
+
+    #nela-fav-section[hidden] {
+      display: none !important;
+    }
+  </style>
+</head>
+<body>
+{% macro option_card(opt, fav_ids) %}
+      <article class="option-card {{ 'selected' if opt.selected else '' }}">
+        {% if opt.simple_product_id %}
+        <button
+          type="button"
+          class="favourite-btn"
+          data-product-id="{{ opt.simple_product_id }}"
+          aria-pressed="{{ 'true' if opt.simple_product_id in fav_ids else 'false' }}"
+          aria-label="Ulubione danie"
+          title="Ulubione"
+        >
+          <svg class="heart-outline" viewBox="0 0 24 24" fill="none" stroke="currentColor" stroke-width="2" aria-hidden="true">
+            <path d="M12 21s-7-4.35-10-8.5C-1 8.5 2.5 4 7 4c2.35 0 4.2 1.1 5 2.8C12.8 5.1 14.65 4 17 4c4.5 0 8 4.5 5 8.5C19 16.65 12 21 12 21z"/>
+          </svg>
+          <svg class="heart-filled" viewBox="0 0 24 24" fill="currentColor" aria-hidden="true">
+            <path d="M12 21s-7-4.35-10-8.5C-1 8.5 2.5 4 7 4c2.35 0 4.2 1.1 5 2.8C12.8 5.1 14.65 4 17 4c4.5 0 8 4.5 5 8.5C19 16.65 12 21 12 21z"/>
+          </svg>
+        </button>
+        {% endif %}
+        <div class="option-image-wrap">
+          {% if opt.imageUrl %}
+          <img class="option-image" src="{{ opt.imageUrl }}" alt="{{ opt.name }}" loading="lazy">
+          {% else %}
+          <span class="option-meta">Brak zdjęcia</span>
+          {% endif %}
+        </div>
+        <div class="option-body">
+          {% if opt.selected %}
+          <span class="selected-pill">Wybrane</span>
+          {% endif %}
+          <div class="option-name">{{ opt.name }}</div>
+          <div class="option-meta">
+            {% if opt.calorific is not none %}kcal {{ opt.calorific }}{% endif %}
+            {% if opt.protein is not none %} · białko {{ opt.protein }} g{% endif %}
+            {% if opt.fiber is not none %} · błonnik {{ opt.fiber }} g{% endif %}
+          </div>
+        </div>
+      </article>
+{% endmacro %}
+  <div class="page">
+    <header class="date-header">
+      {% if weekday_label and date_display %}
+      <p class="date-header-primary">{{ weekday_label | capitalize }}</p>
+      <p class="date-header-secondary">{{ date_display }}</p>
+      {% else %}
+      <p class="date-header-primary date-header-secondary is-raw">{{ current_date }}</p>
+      {% endif %}
+    </header>
+    <div class="back-row">
+      <a class="back-button" href="/nela">← Wróć</a>
+    </div>
+
+    {% if error_message %}
+    <p class="error">{{ error_message }}</p>
+    {% elif not favourite_options and not other_options %}
+    <p class="empty">Brak opcji obiadu dla tego dnia (lub brak dostawy w NTFY).</p>
+    {% endif %}
+
+    {% if favourite_options or other_options %}
+    <section id="nela-fav-section" class="options-section"{% if not favourite_options %} hidden{% endif %}>
+      <h2 class="section-title"><span class="section-heart" aria-hidden="true">♥</span>Ulubione</h2>
+      <div class="options-grid" id="nela-fav-grid">
+        {% for opt in favourite_options %}
+        {{ option_card(opt, favourite_ids) }}
+        {% endfor %}
+      </div>
+    </section>
+
+    <section class="options-section">
+      <h2 id="nela-rest-heading" class="section-title"{% if not favourite_options or not other_options %} hidden{% endif %}>Pozostałe opcje</h2>
+      <div class="options-grid" id="nela-rest-grid">
+        {% for opt in other_options %}
+        {{ option_card(opt, favourite_ids) }}
+        {% endfor %}
+      </div>
+    </section>
+    {% endif %}
+  </div>
+  <script>
+    (function () {
+      var labels = { on: "Usuń z ulubionych", off: "Dodaj do ulubionych" };
+      function syncSectionsAfterFavouriteChange() {
+        var favSection = document.getElementById("nela-fav-section");
+        var favGrid = document.getElementById("nela-fav-grid");
+        var restGrid = document.getElementById("nela-rest-grid");
+        var restHeading = document.getElementById("nela-rest-heading");
+        if (!favSection || !favGrid) return;
+        var nf = favGrid.children.length;
+        var nr = restGrid ? restGrid.children.length : 0;
+        favSection.hidden = nf === 0;
+        if (restHeading) restHeading.hidden = nf === 0 || nr === 0;
+      }
+      document.querySelectorAll(".favourite-btn").forEach(function (btn) {
+        function syncLabel() {
+          var on = btn.getAttribute("aria-pressed") === "true";
+          btn.setAttribute("aria-label", on ? labels.on : labels.off);
+          btn.title = on ? labels.on : labels.off;
+        }
+        syncLabel();
+        btn.addEventListener("click", function () {
+          var id = btn.getAttribute("data-product-id");
+          if (!id) return;
+          var next = btn.getAttribute("aria-pressed") !== "true";
+          var card = btn.closest(".option-card");
+          var favGrid = document.getElementById("nela-fav-grid");
+          var restGrid = document.getElementById("nela-rest-grid");
+          fetch("/api/nela/favourite", {
+            method: "POST",
+            headers: { "Content-Type": "application/json" },
+            body: JSON.stringify({ simple_product_id: id, favourite: next }),
+          })
+            .then(function (r) {
+              if (!r.ok) return;
+              return r.json();
+            })
+            .then(function (data) {
+              if (!data || typeof data.favourite !== "boolean") return;
+              btn.setAttribute("aria-pressed", data.favourite ? "true" : "false");
+              syncLabel();
+              if (card && favGrid && restGrid) {
+                if (data.favourite) {
+                  favGrid.appendChild(card);
+                } else {
+                  restGrid.appendChild(card);
+                }
+                syncSectionsAfterFavouriteChange();
+              }
+            });
+        });
+      });
+    })();
+  </script>
+</body>
+</html>

@@ -14,4 +14,10 @@ if [[ " ${args[*]} " != *" --port "* ]]; then
   args=(--port "${NTFY_PORT:-5058}" "${args[@]}")
 fi
 
-exec python3 meal_chooser_web.py "${args[@]}"
+if [[ -x "$SCRIPT_DIR/.venv/bin/python" ]]; then
+  PYTHON_BIN="$SCRIPT_DIR/.venv/bin/python"
+else
+  PYTHON_BIN="python3"
+fi
+
+exec "$PYTHON_BIN" meal_chooser_web.py "${args[@]}"

@@ -3,8 +3,10 @@ from __future__ import annotations
 import base64
 import json
 import os
+import tempfile
 import unittest
 from argparse import Namespace
+from pathlib import Path
 
 from meal_chooser_web import (
     create_app,
@@ -12,7 +14,9 @@ from meal_chooser_web import (
     livekid_has_obiad,
     livekid_kid_id,
     livekid_meal_name_from_payloads,
+    load_nela_favourite_product_ids,
     nela_obiad_name,
+    obiad_meal_from_rows_by_meal,
     select_first_meal_name,
     select_page_first_meal_name,
 )
@@ -126,6 +130,22 @@ class NelaPageLogicTestCase(unittest.TestCase):
 
         self.assertEqual(nela_obiad_name(payload), "Pomidorowa")
 
+    def test_obiad_meal_from_rows_by_meal_returns_lunch_bucket(self) -> None:
+        from ntfy_meals_lib import build_rows_by_meal
+
+        payload = make_delivery_payload(
+            [
+                {"key": "BREAKFAST", "label": "Śniadanie", "product_name": "Owsianka"},
+                {"key": "LUNCH", "label": "Obiad", "product_name": "Zupa"},
+            ]
+        )
+        _, rows_by_meal = build_rows_by_meal(payload)
+        label, rows = obiad_meal_from_rows_by_meal(rows_by_meal)
+
+        self.assertEqual(label, "Obiad")
+        self.assertEqual(len(rows), 1)
+        self.assertEqual(rows[0].get("name"), "Zupa")
+
     def test_nela_obiad_name_returns_none_when_lunch_missing(self) -> None:
         payload = make_delivery_payload(
             [
@@ -220,6 +240,60 @@ class NelaPageAuthTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.location, "/login?next=/nela?start%3D2026-04-11")
+
+
+class NelaFavouritesTestCase(unittest.TestCase):
+    def setUp(self) -> None:
+        self.previous_password = os.environ.get("APP_PASSWORD")
+        os.environ["APP_PASSWORD"] = "test-password"
+        self._tmpdir = tempfile.TemporaryDirectory()
+        self.favourites_path = Path(self._tmpdir.name) / "nela_meal_favourites.json"
+        self.app = create_app(
+            Namespace(
+                date="2026-04-11",
+                diet_name="Test",
+                config="config.json",
+                cookies=None,
+                host="127.0.0.1",
+                port=5000,
+            ),
+            nela_favourites_path=self.favourites_path,
+        )
+        self.app.config["TESTING"] = True
+        self.client = self.app.test_client()
+        with self.client.session_transaction() as session:
+            session["authenticated"] = True
+            session.permanent = True
+
+    def tearDown(self) -> None:
+        self._tmpdir.cleanup()
+        if self.previous_password is None:
+            os.environ.pop("APP_PASSWORD", None)
+        else:
+            os.environ["APP_PASSWORD"] = self.previous_password
+
+    def test_favourite_api_persists_and_removes_product_id(self) -> None:
+        response = self.client.post(
+            "/api/nela/favourite",
+            json={"simple_product_id": "prod-42", "favourite": True},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(response.get_json(), {"simple_product_id": "prod-42", "favourite": True})
+        self.assertEqual(load_nela_favourite_product_ids(self.favourites_path), {"prod-42"})
+
+        response = self.client.post(
+            "/api/nela/favourite",
+            json={"simple_product_id": "prod-42", "favourite": False},
+        )
+        self.assertEqual(response.status_code, 200)
+        self.assertEqual(load_nela_favourite_product_ids(self.favourites_path), set())
+
+    def test_favourite_api_rejects_invalid_payload(self) -> None:
+        response = self.client.post("/api/nela/favourite", json={"favourite": True})
+        self.assertEqual(response.status_code, 400)
+
+        response = self.client.post("/api/nela/favourite", json={"simple_product_id": "x", "favourite": "yes"})
+        self.assertEqual(response.status_code, 400)
 
 
 if __name__ == "__main__":

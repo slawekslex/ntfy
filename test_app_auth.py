@@ -42,6 +42,15 @@ class AppAuthTestCase(unittest.TestCase):
         self.assertEqual(response.status_code, 401)
         self.assertEqual(response.get_json(), {"error": "Authentication required."})
 
+    def test_nela_favourite_api_returns_unauthorized_when_not_authenticated(self) -> None:
+        response = self.client.post(
+            "/api/nela/favourite",
+            json={"simple_product_id": "p1", "favourite": True},
+        )
+
+        self.assertEqual(response.status_code, 401)
+        self.assertEqual(response.get_json(), {"error": "Authentication required."})
+
     def test_login_sets_authenticated_session(self) -> None:
         response = self.client.post(
             "/login",
@@ -69,6 +78,12 @@ class AppAuthTestCase(unittest.TestCase):
 
         self.assertEqual(response.status_code, 302)
         self.assertEqual(response.location, "/nela?start=2026-04-20")
+
+    def test_nela_opcje_redirects_to_login_when_not_authenticated(self) -> None:
+        response = self.client.get("/nela_opcje?date=2026-04-11")
+
+        self.assertEqual(response.status_code, 302)
+        self.assertEqual(response.location, "/login?next=/nela_opcje?date%3D2026-04-11")
 
 
 if __name__ == "__main__":
